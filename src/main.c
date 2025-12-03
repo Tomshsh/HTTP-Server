@@ -17,8 +17,9 @@
 #define CONTENT_TEXT "Content-Type: text/plain\r\n"
 #define CONTENT_LEN "Content-Length: %zu\r\n"
 
-#define success_headers HDR_200 CONTENT_TEXT CONTENT_LEN "\r\n"
-#define success_response(buff, body) snprintf((char *)buff, sizeof(buff), success_headers "%s", strlen(body), body)
+#define success_headers HDR_200 CONTENT_TEXT CONTENT_LEN
+#define failure_headers HDR_404
+#define success_response(buff, body) snprintf((char *)buff, sizeof(buff), success_headers "\r\n" "%s", strlen(body), body)
 
 int err_n_die(const char *fmt, ...)
 {
@@ -126,11 +127,11 @@ int main()
 		}
 
 		else if (0 == strcmp(path, "/"))
-			snprintf((char *)buff, sizeof(buff), HDR_200);
+			snprintf((char *)buff, sizeof(buff), HDR_200 "\r\n");
 
 
 		else 
-			snprintf((char *)buff, sizeof(buff), HDR_404);
+			snprintf((char *)buff, sizeof(buff), HDR_404 "\r\n");
 		
 		
 
