@@ -11,6 +11,8 @@
 
 #define SERVER_PORT 4221
 #define MAXLINE 4096
+#define HDR_200 "HTTP/1.1 200 OK\r\n"
+#define HDR_404 "HTTP/1.1 404 Not Found\r\n"
 
 int err_n_die(const char *fmt, ...)
 {
@@ -45,7 +47,7 @@ int main()
 	// You can use print statements as follows for debugging, they'll be visible when running tests.
 	printf("Logs from your program will appear here!\n");
 
-	int 				listenfd, connfd, n;
+	int 				listenfd, connfd;
 	struct sockaddr_in 	servaddr;
 	uint8_t 			buff[MAXLINE + 1];
 	uint8_t 			recvline[MAXLINE + 1];
@@ -72,9 +74,9 @@ int main()
 
 	printf("Waiting for a client to connect...\n");
 	
-	// for (;;)
-	// {
-		// ssize_t 		   n;
+	for (;;)
+	{
+		ssize_t 		   n;
 		struct sockaddr_in client_addr;
 		char 			   s_client_addr[INET_ADDRSTRLEN];
 		socklen_t 		   client_addr_len;
@@ -83,36 +85,55 @@ int main()
 		
 		connfd = accept(listenfd, (struct sockaddr *) &client_addr, &client_addr_len);
 		printf("Client connected\n");
-		// inet_ntop(AF_INET, &client_addr.sin_addr, s_client_addr, INET_ADDRSTRLEN);
+		inet_ntop(AF_INET, &client_addr.sin_addr, s_client_addr, INET_ADDRSTRLEN);
 
 		// printf("Client %s:%d connected\n", s_client_addr, ntohs(client_addr.sin_port));
 
-		// memset(recvline, 0, MAXLINE);
+		memset(recvline, 0, MAXLINE);
 
-		// while ((n = read(connfd, recvline, MAXLINE - 1)) > 0)
-		// {
+		while ((n = read(connfd, recvline, MAXLINE - 1)) > 0)
+		{
 			// printf("%s\n", recvline);
 			
-			// if (strstr((char *)&recvline, "\r\n\r\n"))
-				// break;
-		// }
+			if (strstr((char *)&recvline, "\r\n\r\n"))
+				break;
+		}
 
-		// memset(recvline, 0, MAXLINE);
 
 		if (n < 0)
 			err_n_die("read error.");
 
-		snprintf((char *)buff, sizeof(buff), 
-			"HTTP/1.1 200 OK\r\n"
+		char *rqst_hdr;
+		if (!(rqst_hdr = strstr((char *)&recvline, "GET /")))
+		{
+			close(connfd);
+			continue;
+		}
+
+		
+		char *path = strtok(rqst_hdr + 4, " ");
+		if (strcmp(path, "/") == 0)
+			snprintf((char *)buff, sizeof(buff), HDR_200);
+
+		else 
+			snprintf((char *)buff, sizeof(buff), HDR_404);
+		
+		
+
+		// snprintf((char *)buff, sizeof(buff), 
+		// 	"HTTP/1.1 200 OK\r\n"
 			// "Content-Type: text/plain\r\n"
 			// "Content-Length: 5\r\n"
-			"\r\n"
+			// "\r\n"
 			// "Hello"
-		);
+		// );
 
+
+		size_t buff_len = strlen((char *)buff);
+		snprintf((char *)&buff[buff_len], sizeof(buff) - buff_len, "\r\n");
 		write(connfd, buff, strlen((char *)buff));
 		close(connfd);
-	// }
+	}
 
 	return 0;
 }
