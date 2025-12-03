@@ -91,26 +91,26 @@ int main()
 
 		// while ((n = read(connfd, recvline, MAXLINE - 1)) > 0)
 		// {
-		// 	// printf("%s\n", recvline);
+			// printf("%s\n", recvline);
 			
-		// 	if (strstr((char *)&recvline, "\r\n\r\n"))
-		// 		break;
+			// if (strstr((char *)&recvline, "\r\n\r\n"))
+				// break;
 		// }
 
 		// memset(recvline, 0, MAXLINE);
 
-		// if (n < 0)
-		// 	err_n_die("read error.");
+		if (n < 0)
+			err_n_die("read error.");
 
-		// 	snprintf((char *)buff, sizeof(buff), 
-		// 		"HTTP/1.0 200 OK\r\n"
-		// 		"Content-Type: text/plain\r\n"
-		// 		"Content-Length: 5\r\n"
-		// 		"\r\n"
-		// 		"Hello"
-		// 	);
+		snprintf((char *)buff, sizeof(buff), 
+			"HTTP/1.1 200 OK\r\n"
+			// "Content-Type: text/plain\r\n"
+			// "Content-Length: 5\r\n"
+			"\r\n"
+			// "Hello"
+		);
 
-		// write(connfd, buff, strlen((char *)buff));
+		write(connfd, buff, strlen((char *)buff));
 		close(connfd);
 	// }
 
