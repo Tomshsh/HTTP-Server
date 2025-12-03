@@ -11,8 +11,14 @@
 
 #define SERVER_PORT 4221
 #define MAXLINE 4096
+
 #define HDR_200 "HTTP/1.1 200 OK\r\n"
 #define HDR_404 "HTTP/1.1 404 Not Found\r\n"
+#define CONTENT_TEXT "Content-Type: text/plain\r\n"
+#define CONTENT_LEN "Content-Length: %zu\r\n"
+
+#define success_headers HDR_200 CONTENT_TEXT CONTENT_LEN "\r\n"
+#define success_response(buff, body) snprintf(buff, sizeof(buff), success_headers "%s", strlen(body), body)
 
 int err_n_die(const char *fmt, ...)
 {
@@ -112,8 +118,15 @@ int main()
 
 		
 		char *path = strtok(rqst_hdr + 4, " ");
-		if (strcmp(path, "/") == 0)
+		if (0 == strncmp(path, "/echo/", 6))
+		{
+			char *body = strtok(&path[6], " ");
+			success_response((char *)buff, body);
+		}
+
+		else if (0 == strcmp(path, "/"))
 			snprintf((char *)buff, sizeof(buff), HDR_200);
+
 
 		else 
 			snprintf((char *)buff, sizeof(buff), HDR_404);
@@ -129,8 +142,6 @@ int main()
 		// );
 
 
-		size_t buff_len = strlen((char *)buff);
-		snprintf((char *)&buff[buff_len], sizeof(buff) - buff_len, "\r\n");
 		write(connfd, buff, strlen((char *)buff));
 		close(connfd);
 	}
