@@ -18,7 +18,7 @@
 #define CONTENT_LEN "Content-Length: %zu\r\n"
 
 #define success_headers HDR_200 CONTENT_TEXT CONTENT_LEN "\r\n"
-#define success_response(buff, body) snprintf(buff, sizeof(buff), success_headers "%s", strlen(body), body)
+#define success_response(buff, body) snprintf((char *)buff, sizeof(buff), success_headers "%s", strlen(body), body)
 
 int err_n_die(const char *fmt, ...)
 {
@@ -121,7 +121,8 @@ int main()
 		if (0 == strncmp(path, "/echo/", 6))
 		{
 			char *body = strtok(&path[6], " ");
-			success_response((char *)buff, body);
+			success_response(buff, body);
+			printf("%s", buff);
 		}
 
 		else if (0 == strcmp(path, "/"))
