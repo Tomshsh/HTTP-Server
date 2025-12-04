@@ -154,14 +154,12 @@ int main()
 			continue;
 		}	
 		
-		url = strstr(get_url, "/");
+		url = strtok(strstr(get_url, "/"), " ");
+		
 		if (0 == strncmp(url, "/echo", 5))
-		{
-			char *body = strtok(&url[6], " ");
-			success_response(buff, body);
-		}
+			success_response(buff, &url[6]);
 
-		if (0 == strncmp(url, "/user-agent", 11))
+		else if (0 == strncmp(url, "/user-agent", 11))
 		{
 			if ((user_agent = str_array_find(req_headers, "User-Agent:")))
 				success_response(buff, &user_agent[12]);
