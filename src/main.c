@@ -18,7 +18,7 @@
 #define CONTENT_LEN "Content-Length: %zu\r\n"
 
 #define success_headers HDR_200 CONTENT_TEXT CONTENT_LEN
-#define failure_headers HDR_404
+#define error_headers HDR_404
 #define success_response(buff, body) snprintf((char *)buff, sizeof(buff), success_headers "\r\n" "%s", strlen(body), body)
 
 int err_n_die(const char *fmt, ...)
@@ -43,6 +43,43 @@ int err_n_die(const char *fmt, ...)
 	va_end(ap);
 
 	exit(1);
+}
+
+/**
+ * @brief splits text by delimiter
+ * 
+ * @param str text to split
+ * @param delim delimiter string
+ * @return char** - a newly allocated string array containing the split resulting elements 
+ */
+char **split(char *str, char *delim)
+{
+	size_t capacity = 10;
+	char **arr = malloc(capacity * sizeof(char *));
+	char *tok = strtok(str, delim);
+	int i = 0;
+	for (; tok; i++)
+	{
+		if (i >= capacity)
+		{
+			capacity += 5;
+			arr = realloc(arr, capacity * sizeof(char *));
+		}
+		arr[i] = tok;
+		tok = strtok(NULL, delim);
+	}
+	
+	arr[i] = NULL;
+	return arr;
+}
+
+char *str_array_find(char **a, const char *substr)
+{
+	for (int i = 0; a[i]; i++) 
+		if (strstr(a[i], substr))
+			return a[i];
+	
+	return NULL;
 }
 
 int main()
@@ -87,6 +124,9 @@ int main()
 		struct sockaddr_in client_addr;
 		char 			   s_client_addr[INET_ADDRSTRLEN];
 		socklen_t 		   client_addr_len;
+
+		char **req_headers;
+		char *get_url, *user_agent, *url;
 		
 		client_addr_len = sizeof(client_addr);
 		
@@ -99,50 +139,44 @@ int main()
 		memset(recvline, 0, MAXLINE);
 
 		while ((n = read(connfd, recvline, MAXLINE - 1)) > 0)
-		{
-			// printf("%s\n", recvline);
-			
-			if (strstr((char *)&recvline, "\r\n\r\n"))
+			if (strstr((char *)recvline, "\r\n\r\n"))
 				break;
-		}
 
 
 		if (n < 0)
 			err_n_die("read error.");
 
-		char *rqst_hdr;
-		if (!(rqst_hdr = strstr((char *)&recvline, "GET /")))
+		req_headers = split((char *)recvline, "\r\n");
+		if (!(get_url = str_array_find(req_headers, "GET /")))
 		{
+			printf("Not a GET request\n");
 			close(connfd);
 			continue;
-		}
-
+		}	
 		
-		char *path = strtok(rqst_hdr + 4, " ");
-		if (0 == strncmp(path, "/echo/", 6))
+		url = strstr(get_url, "/");
+		if (0 == strncmp(url, "/echo", 5))
 		{
-			char *body = strtok(&path[6], " ");
+			char *body = strtok(&url[6], " ");
 			success_response(buff, body);
-			printf("%s", buff);
 		}
 
-		else if (0 == strcmp(path, "/"))
+		if (0 == strncmp(url, "/user-agent", 11))
+		{
+			if ((user_agent = str_array_find(req_headers, "User-Agent:")))
+				success_response(buff, &user_agent[12]);
+			else
+				snprintf((char *)buff, sizeof(buff), error_headers "\r\n");
+		}		
+
+		else if (0 == strcmp(url, "/"))
 			snprintf((char *)buff, sizeof(buff), HDR_200 "\r\n");
 
 
 		else 
-			snprintf((char *)buff, sizeof(buff), HDR_404 "\r\n");
+			snprintf((char *)buff, sizeof(buff), error_headers "\r\n");
 		
 		
-
-		// snprintf((char *)buff, sizeof(buff), 
-		// 	"HTTP/1.1 200 OK\r\n"
-			// "Content-Type: text/plain\r\n"
-			// "Content-Length: 5\r\n"
-			// "\r\n"
-			// "Hello"
-		// );
-
 
 		write(connfd, buff, strlen((char *)buff));
 		close(connfd);
