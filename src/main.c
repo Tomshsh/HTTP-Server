@@ -46,11 +46,11 @@ int err_n_die(const char *fmt, ...)
 }
 
 /**
- * @brief splits text by delimiter
+ * @brief splits text by delimiter, storing pointers to positions of the original text.
  * 
  * @param str text to split
  * @param delim delimiter string
- * @return char** - a newly allocated string array containing the split resulting elements 
+ * @return char** - a newly allocated string array containing the split elements 
  */
 char **split(char *str, char *delim)
 {
@@ -116,7 +116,7 @@ int main()
 	if (listen(listenfd, 10) < 0)
 		err_n_die("listen error.");
 
-	printf("Waiting for a client to connect...\n");
+	printf("Waiting for a client to connect....\n");
 	
 	for (;;)
 	{
@@ -124,19 +124,20 @@ int main()
 		struct sockaddr_in client_addr;
 		char 			   s_client_addr[INET_ADDRSTRLEN];
 		socklen_t 		   client_addr_len;
+		char 			   **req_headers;
+		char 			   *get_url, *user_agent, *url;
 
-		char **req_headers;
-		char *get_url, *user_agent, *url;
+		printf("%s\n", buff);
 		
 		client_addr_len = sizeof(client_addr);
 		
 		connfd = accept(listenfd, (struct sockaddr *) &client_addr, &client_addr_len);
-		printf("Client connected\n");
 		inet_ntop(AF_INET, &client_addr.sin_addr, s_client_addr, INET_ADDRSTRLEN);
 
 		// printf("Client %s:%d connected\n", s_client_addr, ntohs(client_addr.sin_port));
 
 		memset(recvline, 0, MAXLINE);
+		memset(buff, 0, MAXLINE);
 
 		while ((n = read(connfd, recvline, MAXLINE - 1)) > 0)
 			if (strstr((char *)recvline, "\r\n\r\n"))
@@ -147,6 +148,11 @@ int main()
 			err_n_die("read error.");
 
 		req_headers = split((char *)recvline, "\r\n");
+
+		// for (int i = 0; req_headers[i]; i++)
+		// 	printf("%s\n", req_headers[i]);
+
+
 		if (!(get_url = str_array_find(req_headers, "GET /")))
 		{
 			printf("Not a GET request\n");
@@ -154,8 +160,15 @@ int main()
 			continue;
 		}	
 		
-		url = strtok(strstr(get_url, "/"), " ");
 		
+		
+		
+		
+		
+		
+		
+		url = strtok(strstr(get_url, "/"), " ");
+		printf("%s requested\n", url);
 		if (0 == strncmp(url, "/echo", 5))
 			success_response(buff, &url[6]);
 
@@ -176,8 +189,14 @@ int main()
 		
 		
 
+		
+		
+		
+		
 		write(connfd, buff, strlen((char *)buff));
 		close(connfd);
+		free(req_headers);
+		req_headers = NULL;
 	}
 
 	return 0;
