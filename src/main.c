@@ -22,9 +22,9 @@
 #define CONTENT_TEXT "Content-Type: text/plain\r\n"
 #define CONTENT_LEN "Content-Length: %zu\r\n"
 
-#define success_headers HDR_200 CONTENT_TEXT CONTENT_LEN
-#define error_headers HDR_404
-#define success_response(buff, body) snprintf((char *)buff, 1024, success_headers "\r\n" "%s", strlen(body), body)
+#define success_headers HDR_200 CONTENT_TEXT CONTENT_LEN "\r\n"
+#define error_headers HDR_404 "\r\n"
+#define success_response(buff, body) snprintf((char *)buff, MAXLINE, success_headers "%s", strlen(body), body)
 
 int err_n_die(const char *fmt, ...)
 {
@@ -59,36 +59,39 @@ int err_n_die(const char *fmt, ...)
  */
 char **split(char *str, char *delim)
 {
-	char **arr = NULL;
-	size_t capacity = 1024;
+	char 	**arr = NULL;
+	size_t 	capacity = 20;
+	int 	count = 0;
 	if ((arr = malloc(capacity * sizeof(char *))) == NULL)
 		err_n_die("malloc error");
 
 	memset(arr, 0, capacity * sizeof(char *));
 	char *tok = strtok(str, delim);
-	int i = 0;
-	for (; tok; i++)
+	while (tok)
 	{
-		if (i >= (int)capacity)
+		// Ensure room for tokens + final NULL
+		if (count + 1 >= (int)capacity)
 		{
+			size_t old_capacity = capacity;
 			capacity += 5;
-			if ((arr = realloc(arr, capacity * sizeof(char *))) == NULL);
+			if ((arr = realloc(arr, capacity * sizeof(char *))) == NULL)
 				err_n_die("realloc error 1");
 
-			memset(arr + capacity - 5, 0, 5 * sizeof(char *));
+			memset(arr + old_capacity, 0, (capacity - old_capacity) * sizeof(char *));
 		}
-		arr[i] = tok;
+		arr[count++] = tok;
 		tok = strtok(NULL, delim);
 	}
 	
-	if (i >= (int)capacity)
-		if ((arr = realloc(arr, (capacity + 1) * sizeof(char *))) == NULL)
-			err_n_die("realloc error 2");
-
-	arr[i] = NULL;
+	arr[count] = NULL;
 	return arr;
 }
 
+/**
+ * @brief find text element substr in array a
+ * 
+ * @returns pointer to the matching element inside a
+ */
 char *str_array_find(char **a, const char *substr)
 {
 	for (int i = 0; a[i]; i++) 
@@ -98,11 +101,15 @@ char *str_array_find(char **a, const char *substr)
 	return NULL;
 }
 
-void handle_get_request(char *buff, char *url_line, char **req_headers)
+
+/**
+ * @brief examines http request provided in req_url and req_headers, writes http response into buff
+ */
+void handle_get_request(char *buff, char *req_url, char **req_headers)
 {
 	char *user_agent, *url;
 
-	url = strtok(strstr(url_line, "/"), " ");
+	url = strtok(strstr(req_url, "/"), " ");
 	printf("%s requested\n", url);
 	
 	if (0 == strncmp(url, "/echo", 5))
@@ -112,14 +119,23 @@ void handle_get_request(char *buff, char *url_line, char **req_headers)
 		if ((user_agent = str_array_find(req_headers, "User-Agent:")))
 			success_response(buff, &user_agent[12]);
 		else
-			snprintf(buff, sizeof(buff), error_headers "\r\n");
+			snprintf(buff, sizeof(buff), error_headers);
 	}		
 	else if (0 == strcmp(url, "/"))
 		snprintf(buff, sizeof(buff), HDR_200 "\r\n");
 	else 
-		snprintf(buff, sizeof(buff), error_headers "\r\n");
+		snprintf(buff, sizeof(buff), error_headers);
 }
 
+/**
+ * @brief accepts a new connection and creates an epoll event.
+ * 
+ * @param listenfd socket file descriptor
+ * @param epollfd epoll file descriptor
+ * @param ev epoll event
+ * 
+ * @return 0 for success, -1 for failure
+ */
 int accept_connection(int listenfd, int epollfd, struct epoll_event ev)
 {
 	struct sockaddr_in client_addr;
@@ -140,7 +156,7 @@ int accept_connection(int listenfd, int epollfd, struct epoll_event ev)
 	if (-1 == epoll_ctl(epollfd, EPOLL_CTL_ADD, connfd, &ev))
 	{
 		printf("epoll ctl add error\n");
-		write(connfd, error_headers "\r\n", 255);
+		write(connfd, error_headers, 255);
 		close(connfd);
 		return -1;
 	}
@@ -149,6 +165,8 @@ int accept_connection(int listenfd, int epollfd, struct epoll_event ev)
 	// printf("Client %s:%d connected\n", s_client_addr, ntohs(client_addr.sin_port));
 	return 0;
 }
+
+
 
 int main()
 {
@@ -214,7 +232,6 @@ int main()
 				continue;
 	
 			printf("READ FROM connfd %d %d bytes\n", events[i].data.fd, (int)n);
-	
 			req_headers = split((char *)recvline, "\r\n");
 	
 			if (!(get_url = str_array_find(req_headers, "GET /")))
@@ -233,14 +250,10 @@ int main()
 			free(req_headers);
 			req_headers = NULL;
 		}
-		
 		fcntl(listenfd, F_SETFL, O_NONBLOCK);
 		if (clients < MAX_CLIENTS)
 			if (accept_connection(listenfd, epollfd, ev[clients]) == 0)
 				clients++;
-
-
 	}
-
 	return 0;
 }
