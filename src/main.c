@@ -22,9 +22,9 @@
 #define CONTENT_TEXT "Content-Type: text/plain\r\n"
 #define CONTENT_LEN "Content-Length: %zu\r\n"
 
-#define success_headers HDR_200 CONTENT_TEXT CONTENT_LEN
-#define error_headers HDR_404
-#define success_response(buff, body) snprintf((char *)buff, sizeof(buff), success_headers "\r\n" "%s", strlen(body), body)
+#define success_headers HDR_200 CONTENT_TEXT CONTENT_LEN "\r\n"
+#define error_headers HDR_404 "\r\n"
+#define success_response(buff, body) snprintf((char *)buff, MAXLINE, success_headers "%s", strlen(body), body)
 
 int err_n_die(const char *fmt, ...)
 {
@@ -59,36 +59,39 @@ int err_n_die(const char *fmt, ...)
  */
 char **split(char *str, char *delim)
 {
-	char **arr = NULL;
-	size_t capacity = 10;
+	char 	**arr = NULL;
+	size_t 	capacity = 20;
+	int 	count = 0;
 	if ((arr = malloc(capacity * sizeof(char *))) == NULL)
 		err_n_die("malloc error");
 
 	memset(arr, 0, capacity * sizeof(char *));
 	char *tok = strtok(str, delim);
-	int i = 0;
-	for (; tok; i++)
+	while (tok)
 	{
-		if (i >= (int)capacity)
+		// Ensure room for tokens + final NULL
+		if (count + 1 >= (int)capacity)
 		{
+			size_t old_capacity = capacity;
 			capacity += 5;
-			if ((arr = realloc(arr, capacity * sizeof(char *))) == NULL);
-				err_n_die("realloc error");
+			if ((arr = realloc(arr, capacity * sizeof(char *))) == NULL)
+				err_n_die("realloc error 1");
 
-			memset(arr + capacity - 5, 0, 5 * sizeof(char *));
+			memset(arr + old_capacity, 0, (capacity - old_capacity) * sizeof(char *));
 		}
-		arr[i] = tok;
+		arr[count++] = tok;
 		tok = strtok(NULL, delim);
 	}
 	
-	if (i >= (int)capacity)
-		if ((arr = realloc(arr, (capacity + 1) * sizeof(char *))) == NULL)
-			err_n_die("realloc error");
-
-	arr[i] = NULL;
+	arr[count] = NULL;
 	return arr;
 }
 
+/**
+ * @brief find text element substr in array a
+ * 
+ * @returns pointer to the matching element inside a
+ */
 char *str_array_find(char **a, const char *substr)
 {
 	for (int i = 0; a[i]; i++) 
@@ -97,6 +100,73 @@ char *str_array_find(char **a, const char *substr)
 	
 	return NULL;
 }
+
+
+/**
+ * @brief examines http request provided in req_url and req_headers, writes http response into buff
+ */
+void handle_get_request(char *buff, char *req_url, char **req_headers)
+{
+	char *user_agent, *url;
+
+	url = strtok(strstr(req_url, "/"), " ");
+	printf("%s requested\n", url);
+	
+	if (0 == strncmp(url, "/echo", 5))
+		success_response(buff, &url[6]);
+	else if (0 == strncmp(url, "/user-agent", 11))
+	{
+		if ((user_agent = str_array_find(req_headers, "User-Agent:")))
+			success_response(buff, &user_agent[12]);
+		else
+			snprintf(buff, sizeof(buff), error_headers);
+	}		
+	else if (0 == strcmp(url, "/"))
+		snprintf(buff, sizeof(buff), HDR_200 "\r\n");
+	else 
+		snprintf(buff, sizeof(buff), error_headers);
+}
+
+/**
+ * @brief accepts a new connection and creates an epoll event.
+ * 
+ * @param listenfd socket file descriptor
+ * @param epollfd epoll file descriptor
+ * @param ev epoll event
+ * 
+ * @return 0 for success, -1 for failure
+ */
+int accept_connection(int listenfd, int epollfd, struct epoll_event ev)
+{
+	struct sockaddr_in client_addr;
+	socklen_t 		   client_addr_len;
+	int 			   connfd;
+	char 			   s_client_addr[INET_ADDRSTRLEN];
+
+	
+	client_addr_len = sizeof(client_addr);
+	
+	connfd = accept(listenfd, (struct sockaddr *) &client_addr, &client_addr_len);
+	if (connfd <= 0)
+		return -1;
+	
+	printf("adding epoll event for connfd: %d\n", connfd);
+	ev.events = EPOLLIN;
+	ev.data.fd = connfd;
+	if (-1 == epoll_ctl(epollfd, EPOLL_CTL_ADD, connfd, &ev))
+	{
+		printf("epoll ctl add error\n");
+		write(connfd, error_headers, 255);
+		close(connfd);
+		return -1;
+	}
+	inet_ntop(AF_INET, &client_addr.sin_addr, s_client_addr, INET_ADDRSTRLEN);
+	
+	// printf("Client %s:%d connected\n", s_client_addr, ntohs(client_addr.sin_port));
+	return 0;
+}
+
+
 
 int main()
 {
@@ -107,7 +177,7 @@ int main()
 	// You can use print statements as follows for debugging, they'll be visible when running tests.
 	printf("Logs from your program will appear here!\n");
 
-	int 				listenfd, connfd, nfds, epollfd, clients = 0;
+	int 				listenfd, nfds, epollfd, clients = 0;
 	struct epoll_event	ev[MAX_CLIENTS], events[MAX_EVENTS];
 	struct sockaddr_in 	servaddr;
 	uint8_t 			buff[MAXLINE + 1];
@@ -141,11 +211,8 @@ int main()
 	while (1)
 	{
 		ssize_t 		   n;
-		struct sockaddr_in client_addr;
-		char 			   s_client_addr[INET_ADDRSTRLEN];
-		socklen_t 		   client_addr_len;
 		char 			   **req_headers;
-		char 			   *get_url, *user_agent, *url;
+		char 			   *get_url;
 
 		if (-1 == (nfds = epoll_wait(epollfd, events, MAX_EVENTS, 1)))
 			printf("epoll_wait error\n");
@@ -164,8 +231,7 @@ int main()
 			if (n <= 0)
 				continue;
 	
-			printf("READ FROM connfd %d %d bytes\n", events[i].data.fd, n);
-	
+			printf("READ FROM connfd %d %d bytes\n", events[i].data.fd, (int)n);
 			req_headers = split((char *)recvline, "\r\n");
 	
 			if (!(get_url = str_array_find(req_headers, "GET /")))
@@ -177,60 +243,17 @@ int main()
 				continue;
 			}	
 			
-			
-			url = strtok(strstr(get_url, "/"), " ");
-			printf("%s requested\n", url);
-			if (0 == strncmp(url, "/echo", 5))
-				success_response(buff, &url[6]);
-	
-			else if (0 == strncmp(url, "/user-agent", 11))
-			{
-				if ((user_agent = str_array_find(req_headers, "User-Agent:")))
-					success_response(buff, &user_agent[12]);
-				else
-					snprintf((char *)buff, sizeof(buff), error_headers "\r\n");
-			}		
-	
-			else if (0 == strcmp(url, "/"))
-				snprintf((char *)buff, sizeof(buff), HDR_200 "\r\n");
-	
-	
-			else 
-				snprintf((char *)buff, sizeof(buff), error_headers "\r\n");
+			handle_get_request((char *)buff, get_url, req_headers);
 			
 			printf("write to connfd %d\n", events[i].data.fd);
 			write(events[i].data.fd, buff, strlen((char *)buff));
 			free(req_headers);
 			req_headers = NULL;
 		}
-		
-		client_addr_len = sizeof(client_addr);
-
 		fcntl(listenfd, F_SETFL, O_NONBLOCK);
 		if (clients < MAX_CLIENTS)
-		{
-			connfd = accept(listenfd, (struct sockaddr *) &client_addr, &client_addr_len);
-			if (connfd <= 0)
-				continue;
-			
-			printf("adding epoll event for connfd: %d\n", connfd);
-			ev[clients].events = EPOLLIN;
-			ev[clients].data.fd = connfd;
-			if (-1 == epoll_ctl(epollfd, EPOLL_CTL_ADD, connfd, &ev[clients]))
-			{
-				printf("epoll ctl add error\n");
-				write(connfd, error_headers "\r\n", 255);
-				close(connfd);
-				continue;
-			}
-			clients++;
-			inet_ntop(AF_INET, &client_addr.sin_addr, s_client_addr, INET_ADDRSTRLEN);
-		}
-
-		// printf("Client %s:%d connected\n", s_client_addr, ntohs(client_addr.sin_port));
-
-
+			if (accept_connection(listenfd, epollfd, ev[clients]) == 0)
+				clients++;
 	}
-
 	return 0;
 }

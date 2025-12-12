@@ -1,0 +1,7 @@
+[
+{
+  "directory": "/workspaces/codecrafters-http-server-c/build",
+  "command": "/usr/bin/aarch64-linux-gnu-gcc -g -o CMakeFiles/http-server.dir/src/main.c.o -c /workspaces/codecrafters-http-server-c/src/main.c",
+  "file": "/workspaces/codecrafters-http-server-c/src/main.c"
+}
+]
