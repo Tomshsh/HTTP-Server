@@ -163,10 +163,10 @@ void handle_get_request(char *buff, char *req_url, char **req_headers, int argc,
 			if (!f)
 				snprintf(buff, sizeof(buff), error_headers);
 			
-			if (0 > (sz = fread(data, 1, MAXLINE, f)))
+			else if (0 > (sz = fread(data, 1, MAXLINE, f)))
 				snprintf(buff, sizeof(buff), error_headers);
 			
-			success_response(buff, sizeof(data), CONT_TYPE_OCT_STREAM, data);
+			else success_response(buff, sizeof(data), CONT_TYPE_OCT_STREAM, data);
 		}
 	}
 	else if (0 == strcmp(url, "/"))
