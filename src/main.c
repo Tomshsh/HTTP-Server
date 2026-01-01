@@ -159,16 +159,12 @@ void handle_get_request(char *buff, char *req_url, char **req_headers, int argc,
 
 			snprintf(filename, 255, "%s%s", argv[2], &url[6]);
 			FILE *f = fopen(filename, "r");
+			
 			if (!f)
-			{
-				printf("fopen error: %s", filename);
 				snprintf(buff, sizeof(buff), error_headers);
-			}
+			
 			if (0 > (sz = fread(data, 1, MAXLINE, f)))
-			{
-				printf("fread error: %s", filename);
 				snprintf(buff, sizeof(buff), error_headers);
-			}
 			
 			success_response(buff, sizeof(data), CONT_TYPE_OCT_STREAM, data);
 		}
