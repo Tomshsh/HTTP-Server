@@ -19,12 +19,41 @@
 
 #define HDR_200 "HTTP/1.1 200 OK\r\n"
 #define HDR_404 "HTTP/1.1 404 Not Found\r\n"
-#define CONTENT_TEXT "Content-Type: text/plain\r\n"
+#define HDR_CONTENT_TYPE "Content-Type: "
+#define CONTENT_TYPE_TEXT "text/plain\r\n"
+#define CONTENT_TYPE_OCT_STREAM "application/octet-stream\r\n"
 #define CONTENT_LEN "Content-Length: %zu\r\n"
 
-#define success_headers HDR_200 CONTENT_TEXT CONTENT_LEN "\r\n"
+#define success_headers HDR_200 HDR_CONTENT_TYPE CONTENT_TYPE_TEXT CONTENT_LEN "\r\n"
 #define error_headers HDR_404 "\r\n"
-#define success_response(buff, body) snprintf((char *)buff, MAXLINE, success_headers "%s", strlen(body), body)
+// #define success_response(buff, body) snprintf((char *)buff, MAXLINE, success_headers "%s", strlen(body), body)
+
+enum CONTENT_TYPE {
+	CONT_TYPE_TEXT,
+	CONT_TYPE_OCT_STREAM,
+	CONT_TYPE_JSON
+};
+
+static inline int success_response(char *buff, size_t buffsz, enum CONTENT_TYPE type, char *body){
+	char content_type[50];
+	switch (type)
+	{
+		case CONT_TYPE_TEXT:
+			memcpy(content_type, CONTENT_TYPE_TEXT, sizeof(content_type));
+			break;
+		case CONT_TYPE_OCT_STREAM:
+			memcpy(content_type, CONTENT_TYPE_OCT_STREAM, sizeof(content_type));
+			break;
+		case CONT_TYPE_JSON:
+			// todo
+			break;
+		
+		default:
+			break;
+	}
+
+	return snprintf(buff, buffsz, HDR_200 HDR_CONTENT_TYPE "%s" CONTENT_LEN "\r\n%s", content_type, strlen(body), body);
+}
 
 int err_n_die(const char *fmt, ...)
 {
@@ -56,29 +85,26 @@ int err_n_die(const char *fmt, ...)
  * @param str text to split
  * @param delim delimiter string
  * @return char** - a newly allocated string array containing the split elements 
+ * 
+ * TODO this uses a dynamic string allocator implementation that needs to be decoupled into a seperate function
  */
 char **split(char *str, char *delim)
 {
 	char 	**arr = NULL;
-	size_t 	capacity = 20;
+	size_t 	capacity = 0;
 	int 	count = 0;
-	if ((arr = malloc(capacity * sizeof(char *))) == NULL)
-		err_n_die("malloc error");
 
-	memset(arr, 0, capacity * sizeof(char *));
 	char *tok = strtok(str, delim);
 	while (tok)
 	{
 		// Ensure room for tokens + final NULL
 		if (count + 1 >= (int)capacity)
 		{
-			size_t old_capacity = capacity;
-			capacity += 5;
+			capacity += 20;
 			if ((arr = realloc(arr, capacity * sizeof(char *))) == NULL)
 				err_n_die("realloc error 1");
-
-			memset(arr + old_capacity, 0, (capacity - old_capacity) * sizeof(char *));
 		}
+		
 		arr[count++] = tok;
 		tok = strtok(NULL, delim);
 	}
@@ -105,7 +131,7 @@ char *str_array_find(char **a, const char *substr)
 /**
  * @brief examines http request provided in req_url and req_headers, writes http response into buff
  */
-void handle_get_request(char *buff, char *req_url, char **req_headers)
+void handle_get_request(char *buff, char *req_url, char **req_headers, int argc, char **argv)
 {
 	char *user_agent, *url;
 
@@ -113,14 +139,40 @@ void handle_get_request(char *buff, char *req_url, char **req_headers)
 	printf("%s requested\n", url);
 	
 	if (0 == strncmp(url, "/echo", 5))
-		success_response(buff, &url[6]);
+		success_response(buff, 255, CONT_TYPE_TEXT, &url[6]);
+
 	else if (0 == strncmp(url, "/user-agent", 11))
-	{
 		if ((user_agent = str_array_find(req_headers, "User-Agent:")))
-			success_response(buff, &user_agent[12]);
+			success_response(buff, 255, CONT_TYPE_TEXT, &user_agent[12]);
 		else
 			snprintf(buff, sizeof(buff), error_headers);
-	}		
+
+	else if(0 == strncmp(url, "/files", 6))
+	{
+		if (argc < 3 && strncmp(argv[1], "--directory", 11))
+			snprintf(buff, sizeof(buff), error_headers);
+		else
+		{
+			char 	filename[255], data[8092];
+			int 	c = 0;
+			size_t 	sz;
+
+			snprintf(filename, 255, "%s%s", argv[2], &url[6]);
+			FILE *f = fopen(filename, "r");
+			if (!f)
+			{
+				printf("fopen error: %s", filename);
+				snprintf(buff, sizeof(buff), error_headers);
+			}
+			if (0 > (sz = fread(data, 1, MAXLINE, f)))
+			{
+				printf("fread error: %s", filename);
+				snprintf(buff, sizeof(buff), error_headers);
+			}
+			
+			success_response(buff, sizeof(data), CONT_TYPE_OCT_STREAM, data);
+		}
+	}
 	else if (0 == strcmp(url, "/"))
 		snprintf(buff, sizeof(buff), HDR_200 "\r\n");
 	else 
@@ -168,14 +220,11 @@ int accept_connection(int listenfd, int epollfd, struct epoll_event ev)
 
 
 
-int main()
+int main(int argc, char **argv)
 {
 	// Disable output buffering
 	setbuf(stdout, NULL);
 	setbuf(stderr, NULL);
-
-	// You can use print statements as follows for debugging, they'll be visible when running tests.
-	printf("Logs from your program will appear here!\n");
 
 	int 				listenfd, nfds, epollfd, clients = 0;
 	struct epoll_event	ev[MAX_CLIENTS], events[MAX_EVENTS];
@@ -186,8 +235,6 @@ int main()
 	if ((listenfd = socket(AF_INET, SOCK_STREAM, 0)) < 0)
 		err_n_die("socket error.");
 
-	// // Since the tester restarts your program quite often, setting SO_REUSEADDR
-	// // ensures that we don't run into 'Address already in use' errors
 	int reuse = 1;
 	if (setsockopt(listenfd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse)) < 0)
 		err_n_die("SO_REUSEADDR failed.");
@@ -214,6 +261,7 @@ int main()
 		char 			   **req_headers;
 		char 			   *get_url;
 
+		// wait for http request events, then read request from each events connection fd
 		if (-1 == (nfds = epoll_wait(epollfd, events, MAX_EVENTS, 1)))
 			printf("epoll_wait error\n");
 
@@ -243,13 +291,15 @@ int main()
 				continue;
 			}	
 			
-			handle_get_request((char *)buff, get_url, req_headers);
+			handle_get_request((char *)buff, get_url, req_headers, argc, argv);
 			
 			printf("write to connfd %d\n", events[i].data.fd);
 			write(events[i].data.fd, buff, strlen((char *)buff));
 			free(req_headers);
 			req_headers = NULL;
 		}
+
+
 		fcntl(listenfd, F_SETFL, O_NONBLOCK);
 		if (clients < MAX_CLIENTS)
 			if (accept_connection(listenfd, epollfd, ev[clients]) == 0)
