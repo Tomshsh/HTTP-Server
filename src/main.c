@@ -28,13 +28,16 @@
 #define error_headers HDR_404 "\r\n"
 // #define success_response(buff, body) snprintf((char *)buff, MAXLINE, success_headers "%s", strlen(body), body)
 
+#define ERROR_404_LEN 28
+#define SUCCESS_200_LEN 20
+
 enum CONTENT_TYPE {
 	CONT_TYPE_TEXT,
 	CONT_TYPE_OCT_STREAM,
 	CONT_TYPE_JSON
 };
 
-static inline int success_response(char *buff, size_t buffsz, enum CONTENT_TYPE type, char *body){
+static inline int success_response(char *buff, enum CONTENT_TYPE type, char *body){
 	char content_type[50];
 	switch (type)
 	{
@@ -52,7 +55,7 @@ static inline int success_response(char *buff, size_t buffsz, enum CONTENT_TYPE 
 			break;
 	}
 
-	return snprintf(buff, buffsz, HDR_200 HDR_CONTENT_TYPE "%s" CONTENT_LEN "\r\n%s", content_type, strlen(body), body);
+	return snprintf(buff, 8092, HDR_200 HDR_CONTENT_TYPE "%s" CONTENT_LEN "\r\n%s", content_type, strlen(body), body);
 }
 
 int err_n_die(const char *fmt, ...)
@@ -139,18 +142,18 @@ void handle_get_request(char *buff, char *req_url, char **req_headers, int argc,
 	printf("%s requested\n", url);
 	
 	if (0 == strncmp(url, "/echo", 5))
-		success_response(buff, 255, CONT_TYPE_TEXT, &url[6]);
+		success_response(buff, CONT_TYPE_TEXT, &url[6]);
 
 	else if (0 == strncmp(url, "/user-agent", 11))
 		if ((user_agent = str_array_find(req_headers, "User-Agent:")))
-			success_response(buff, 255, CONT_TYPE_TEXT, &user_agent[12]);
+			success_response(buff, CONT_TYPE_TEXT, &user_agent[12]);
 		else
-			snprintf(buff, sizeof(buff), error_headers);
+			snprintf(buff, ERROR_404_LEN, error_headers);
 
 	else if(0 == strncmp(url, "/files", 6))
 	{
 		if (argc < 3 && strncmp(argv[1], "--directory", 11))
-			snprintf(buff, sizeof(buff), error_headers);
+			snprintf(buff, ERROR_404_LEN, error_headers);
 		else
 		{
 			char 	filename[255], data[8092];
@@ -161,18 +164,18 @@ void handle_get_request(char *buff, char *req_url, char **req_headers, int argc,
 			FILE *f = fopen(filename, "r");
 			
 			if (!f)
-				snprintf(buff, sizeof(buff), error_headers);
+				snprintf(buff, ERROR_404_LEN, error_headers);
 			
 			else if (0 > (sz = fread(data, 1, MAXLINE, f)))
-				snprintf(buff, sizeof(buff), error_headers);
+				snprintf(buff, ERROR_404_LEN, error_headers);
 			
-			else success_response(buff, sizeof(data), CONT_TYPE_OCT_STREAM, data);
+			else success_response(buff, CONT_TYPE_OCT_STREAM, data);
 		}
 	}
 	else if (0 == strcmp(url, "/"))
 		snprintf(buff, sizeof(buff), HDR_200 "\r\n");
 	else 
-		snprintf(buff, sizeof(buff), error_headers);
+		snprintf(buff, ERROR_404_LEN, error_headers);
 }
 
 /**
