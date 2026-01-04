@@ -173,7 +173,7 @@ void handle_get_request(char *buff, char *req_url, char **req_headers, int argc,
 		}
 	}
 	else if (0 == strcmp(url, "/"))
-		snprintf(buff, sizeof(buff), HDR_200 "\r\n");
+		snprintf(buff, MAXLINE, HDR_200 "\r\n");
 	else 
 		snprintf(buff, MAXLINE, error_headers);
 }
