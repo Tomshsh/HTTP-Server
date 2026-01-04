@@ -148,12 +148,12 @@ void handle_get_request(char *buff, char *req_url, char **req_headers, int argc,
 		if ((user_agent = str_array_find(req_headers, "User-Agent:")))
 			success_response(buff, CONT_TYPE_TEXT, &user_agent[12]);
 		else
-			snprintf(buff, ERROR_404_LEN, error_headers);
+			snprintf(buff, MAXLINE, error_headers);
 
 	else if(0 == strncmp(url, "/files", 6))
 	{
 		if (argc < 3 && strncmp(argv[1], "--directory", 11))
-			snprintf(buff, ERROR_404_LEN, error_headers);
+			snprintf(buff, MAXLINE, error_headers);
 		else
 		{
 			char 	filename[255], data[8092];
@@ -164,10 +164,10 @@ void handle_get_request(char *buff, char *req_url, char **req_headers, int argc,
 			FILE *f = fopen(filename, "r");
 			
 			if (!f)
-				snprintf(buff, ERROR_404_LEN, error_headers);
+				snprintf(buff, MAXLINE, error_headers);
 			
 			else if (0 > (sz = fread(data, 1, MAXLINE, f)))
-				snprintf(buff, ERROR_404_LEN, error_headers);
+				snprintf(buff, MAXLINE, error_headers);
 			
 			else success_response(buff, CONT_TYPE_OCT_STREAM, data);
 		}
@@ -175,7 +175,7 @@ void handle_get_request(char *buff, char *req_url, char **req_headers, int argc,
 	else if (0 == strcmp(url, "/"))
 		snprintf(buff, sizeof(buff), HDR_200 "\r\n");
 	else 
-		snprintf(buff, ERROR_404_LEN, error_headers);
+		snprintf(buff, MAXLINE, error_headers);
 }
 
 /**
@@ -292,7 +292,9 @@ int main(int argc, char **argv)
 			
 			handle_get_request((char *)buff, get_url, req_headers, argc, argv);
 			
-			printf("write to connfd %d\n", events[i].data.fd);
+			printf("write %zu BYTES to connfd %d\n", strlen((char *)buff), events[i].data.fd);
+			printf("%s", buff);
+			// write(events[i].data.fd, buff, sizeof(buff));
 			write(events[i].data.fd, buff, strlen((char *)buff));
 			free(req_headers);
 			req_headers = NULL;
