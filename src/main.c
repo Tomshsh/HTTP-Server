@@ -162,7 +162,7 @@ char *str_array_find(char **a, const char *substr)
 	return NULL;
 }
 
-void handle_post_request(char *buff, char *url, char **req_headers, char *req_body, int argc, char **argv)
+int handle_post_request(char *buff, char *url, char **req_headers, char *req_body, int argc, char **argv)
 {
 	char *base_url 	= strtok(url,  "/");;
 	char *url_arg  	= url_arg = strtok(NULL, "");
@@ -209,7 +209,7 @@ void handle_post_request(char *buff, char *url, char **req_headers, char *req_bo
 /**
  * @brief examines http request provided in req_url and req_headers, writes http response into buff
  */
-void handle_get_request(char *buff, char *url, char **req_headers, int argc, char **argv)
+int handle_get_request(char *buff, char *url, char **req_headers, int argc, char **argv)
 {
 	char *user_agent;
 	char *base_url = strtok(url,  "/");
