@@ -173,17 +173,17 @@ int handle_post_request(char *buff, char *url, char **req_headers, char *req_bod
 		if (header)
 		{
 			strtok(header, ": ");
-			cont_type = strtok(NULL, "/r/n");
+			cont_type = strtok(NULL, "\r\n");
 		}
 	}
 
-	char *cont_len;
+	int cont_len;
 	{
 		char *header = str_array_find(req_headers, "Content-Length");
 		if (header)
 		{
 			strtok(header, ": ");
-			cont_len = atoi(strtok(NULL, "/r/n"));
+			cont_len = atoi(strtok(NULL, "\r\n"));
 		}
 	}
 
@@ -199,7 +199,7 @@ int handle_post_request(char *buff, char *url, char **req_headers, char *req_bod
 		char *file_name;
 		snprintf(file_name, MAXLINE, "%s/%s", argv[2], url_arg);
 		FILE *f = fopen(file_name, "w");
-		size_t n = fwrite(req_body, 1, strlen(req_body), f);
+		size_t n = fwrite(req_body, 1, cont_len, f);
 
 		success_response(buff, CONT_TYPE_NONE, NULL);
 	}
