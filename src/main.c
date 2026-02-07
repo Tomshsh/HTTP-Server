@@ -173,7 +173,7 @@ int handle_post_request(char *buff, char *url, char **req_headers, char *req_bod
 		if (header)
 		{
 			strtok(header, ": ");
-			cont_type = strtok(NULL, "\r\n");
+			cont_type = strtok(NULL, "");
 		}
 	}
 
@@ -190,7 +190,7 @@ int handle_post_request(char *buff, char *url, char **req_headers, char *req_bod
 	printf ("POST %s requested\n", url);
 
 	if (!strcmp(base_url, "files")){
-		if (argc < 3 || cont_len == NULL || strcmp(cont_type, CONTENT_TYPE_OCT_STREAM))
+		if (argc < 3 || strcmp(cont_type, CONTENT_TYPE_OCT_STREAM))
 			return snprintf(buff, MAXLINE, error_headers);
 
 		if (!cont_len)
