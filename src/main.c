@@ -19,6 +19,7 @@
 
 #define HDR_200 "HTTP/1.1 200 OK\r\n"
 #define HDR_404 "HTTP/1.1 404 Not Found\r\n"
+#define HDR_201 "HTTP/1.1 201 Created\r\n"
 #define HDR_CONTENT_TYPE "Content-Type: "
 #define CONTENT_TYPE_TEXT "text/plain\r\n"
 #define CONTENT_TYPE_OCT_STREAM "application/octet-stream\r\n"
@@ -28,25 +29,27 @@
 #define error_headers HDR_404 "\r\n"
 // #define success_response(buff, body) snprintf((char *)buff, MAXLINE, success_headers "%s", strlen(body), body)
 
-#define ERROR_404_LEN 28
-#define SUCCESS_200_LEN 20
-
 enum CONTENT_TYPE {
 	CONT_TYPE_TEXT,
 	CONT_TYPE_OCT_STREAM,
-	CONT_TYPE_JSON
+	CONT_TYPE_JSON,
+	CONT_TYPE_NONE
 };
 
 static inline int success_response(char *buff, enum CONTENT_TYPE type, char *body){
 	char content_type[50];
+	char content_length[50];
+	
 	switch (type)
 	{
 		case CONT_TYPE_TEXT:
-			memcpy(content_type, CONTENT_TYPE_TEXT, sizeof(content_type));
+			memcpy(content_type, HDR_CONTENT_TYPE CONTENT_TYPE_TEXT, sizeof(content_type));
 			break;
 		case CONT_TYPE_OCT_STREAM:
-			memcpy(content_type, CONTENT_TYPE_OCT_STREAM, sizeof(content_type));
+			memcpy(content_type, HDR_CONTENT_TYPE CONTENT_TYPE_OCT_STREAM, sizeof(content_type));
 			break;
+		case CONT_TYPE_NONE:
+			memcpy(content_type, "", 0);
 		case CONT_TYPE_JSON:
 			// todo
 			break;
@@ -55,7 +58,10 @@ static inline int success_response(char *buff, enum CONTENT_TYPE type, char *bod
 			break;
 	}
 
-	return snprintf(buff, 8092, HDR_200 HDR_CONTENT_TYPE "%s" CONTENT_LEN "\r\n%s", content_type, strlen(body), body);
+	if (body && strlen(body))
+		snprintf(content_length, 50, CONTENT_LEN, strlen(body));
+
+	return snprintf(buff, 8092, HDR_200 "%s%s\r\n%s", content_type, content_length, body);
 }
 
 int err_n_die(const char *fmt, ...)
@@ -156,27 +162,77 @@ char *str_array_find(char **a, const char *substr)
 	return NULL;
 }
 
+void handle_post_request(char *buff, char *url, char **req_headers, char *req_body, int argc, char **argv)
+{
+	char *base_url 	= strtok(url,  "/");;
+	char *url_arg  	= url_arg = strtok(NULL, "");
+	
+	char *cont_type;
+	{
+		char *header = str_array_find(req_headers, "Content-Type");
+		if (header)
+		{
+			strtok(header, ": ");
+			cont_type = strtok(NULL, "/r/n");
+		}
+	}
+
+	char *cont_len;
+	{
+		char *header = str_array_find(req_headers, "Content-Length");
+		if (header)
+		{
+			strtok(header, ": ");
+			cont_len = atoi(strtok(NULL, "/r/n"));
+		}
+	}
+
+	printf ("POST %s requested\n", url);
+
+	if (!strcmp(base_url, "files")){
+		if (argc < 3 || cont_len == NULL || strcmp(cont_type, CONT_TYPE_OCT_STREAM))
+			return snprintf(buff, MAXLINE, error_headers);
+
+		if (!cont_len)
+			return success_response(buff, CONT_TYPE_NONE, NULL);
+
+		char *file_name;
+		snprintf(file_name, MAXLINE, "%s/%s", argv[2], url_arg);
+		FILE *f = fopen(file_name, "w");
+		size_t n = fwrite(req_body, 1, strlen(req_body), f);
+
+		success_response(buff, CONT_TYPE_NONE, NULL);
+	}
+}
+
 
 /**
  * @brief examines http request provided in req_url and req_headers, writes http response into buff
  */
-void handle_get_request(char *buff, char *req_url, char **req_headers, int argc, char **argv)
+void handle_get_request(char *buff, char *url, char **req_headers, int argc, char **argv)
 {
-	char *user_agent, *url;
+	char *user_agent;
+	char *base_url = strtok(url,  "/");
+	char *url_arg = strtok(NULL, "");
 
-	url = strtok(strstr(req_url, "/"), " ");
-	printf("%s requested\n", url);
-	
-	if (0 == strncmp(url, "/echo", 5))
-		success_response(buff, CONT_TYPE_TEXT, &url[6]);
+	printf("GET %s/%s requested\n", url, url_arg);
 
-	else if (0 == strncmp(url, "/user-agent", 11))
+	if (!strcmp(url, "/"))
+		snprintf(buff, MAXLINE, HDR_200 "\r\n");
+
+	else if (!base_url)
+		snprintf(buff, MAXLINE, error_headers);
+
+	else if (!strcmp(base_url, "echo"))
+		success_response(buff, CONT_TYPE_TEXT, url_arg);
+
+	else if (!strcmp(base_url, "user-agent"))
 		if ((user_agent = str_array_find(req_headers, "User-Agent:")))
 			success_response(buff, CONT_TYPE_TEXT, &user_agent[12]);
 		else
 			snprintf(buff, MAXLINE, error_headers);
 
-	else if(0 == strncmp(url, "/files", 6))
+	else if(!strcmp(base_url, "files"))
 	{
 		if (argc < 3 && strncmp(argv[1], "--directory", 11))
 			snprintf(buff, MAXLINE, error_headers);
@@ -186,7 +242,7 @@ void handle_get_request(char *buff, char *req_url, char **req_headers, int argc,
 			int 	c = 0;
 			size_t 	sz;
 
-			snprintf(filename, 255, "%s%s", argv[2], &url[6]);
+			snprintf(filename, 255, "%s/%s", argv[2], url_arg);
 			FILE *f = fopen(filename, "r");
 			
 			if (!f)
@@ -198,8 +254,6 @@ void handle_get_request(char *buff, char *req_url, char **req_headers, int argc,
 			else success_response(buff, CONT_TYPE_OCT_STREAM, data);
 		}
 	}
-	else if (0 == strcmp(url, "/"))
-		snprintf(buff, MAXLINE, HDR_200 "\r\n");
 	else 
 		snprintf(buff, MAXLINE, error_headers);
 }
@@ -283,8 +337,9 @@ int main(int argc, char **argv)
 	while (1)
 	{
 		ssize_t 		   n;
-		char 			   **req_headers;
-		char 			   *get_url;
+		char 			   *split_line[3] = {0};
+		char 			   *req_headers[10] = {0};
+		char 			   *req_url;
 
 		// wait for http request events, then read request from each events connection fd
 		if (-1 == (nfds = epoll_wait(epollfd, events, MAX_EVENTS, 1)))
@@ -296,34 +351,40 @@ int main(int argc, char **argv)
 			memset(buff, 0, MAXLINE);
 
 			while ((n = read(events[i].data.fd, recvline, MAXLINE - 1)) > 0)
-			{
 				if (strstr((char *)recvline, "\r\n\r\n"))
 					break;
-			}
 
 			if (n <= 0)
 				continue;
 	
-			printf("READ FROM connfd %d %d bytes\n", events[i].data.fd, (int)n);
-			req_headers = split((char *)recvline, "\r\n");
+			split(split_line, 3, (char *)recvline, "\r\n\r\n");
+			
+			char *headers = split_line[0];
+			char *body = split_line[1];
+			
+			split(req_headers, 10, headers, "\r\n");
+			char *method = strtok(req_headers[0], " ");
+			char *url = strtok(NULL, " ");
 	
-			if (!(get_url = str_array_find(req_headers, "GET /")))
+			if (strstr(method, "GET"))
+				handle_get_request((char *)buff, url, req_headers + 1, argc, argv);
+			
+			else if (strstr(method, "POST"))
 			{
-				printf("Not a GET request\n");
+				if (!body) continue;
+				handle_post_request((char *)buff, url, req_headers + 1, body, argc, argv);
+			}
+
+			else{
+				printf("Not a valid HTTP request\n");
 				close(events[i].data.fd);
-				free(req_headers);
-				req_headers = NULL;
+				memset(req_headers, 0, sizeof(req_headers));
 				continue;
-			}	
+			}
 			
-			handle_get_request((char *)buff, get_url, req_headers, argc, argv);
 			
-			printf("write %zu BYTES to connfd %d\n", strlen((char *)buff), events[i].data.fd);
-			printf("%s", buff);
-			// write(events[i].data.fd, buff, sizeof(buff));
 			write(events[i].data.fd, buff, strlen((char *)buff));
-			free(req_headers);
-			req_headers = NULL;
+			memset(req_headers, 0, sizeof(req_headers));
 		}
 
 
