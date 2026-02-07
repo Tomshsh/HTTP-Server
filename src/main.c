@@ -83,37 +83,63 @@ int err_n_die(const char *fmt, ...)
 }
 
 /**
+ * @brief splits str by provided delim string. 
+ * unlilke strtok, the delimiter is evaluated as the entire string instead its individual characters.
+ */
+char *strtok2(char *str, char *delim)
+{
+	static char *str_p;
+	char *delim_pos;
+	char *start_pos;
+	size_t delim_len;
+
+	if (str != NULL) str_p = str;
+
+	if (str_p == NULL || *str_p == '\0')
+		return NULL;
+
+	if (delim == NULL || *delim == '\0')
+	{
+		start_pos = str_p;
+		str_p = NULL;
+		return start_pos;
+	}
+
+	start_pos = str_p;
+
+	delim_pos = strstr(str_p, delim);
+	delim_len = strlen(delim);
+
+	if (delim_pos != NULL)
+	{
+		*delim_pos = '\0';
+		str_p = delim_pos + delim_len;
+	}
+	else str_p = NULL;
+
+	return start_pos;
+}
+
+/**
  * @brief splits text by delimiter, storing pointers to positions of the original text.
  * 
- * @param str text to split
+ * @param dest string array containing the split elements - must keep space for final NULL item
+ * @param str text to split, gets menipulated
  * @param delim delimiter string
- * @return char** - a newly allocated string array containing the split elements 
- * 
- * TODO this uses a dynamic string allocator implementation that needs to be decoupled into a seperate function
+ * @return ssize_t - number of aplit elements inside dest 
  */
-char **split(char *str, char *delim)
+size_t split(char **dest, size_t dest_cap, char *str, char *delim)
 {
-	char 	**arr = NULL;
-	size_t 	capacity = 0;
 	int 	count = 0;
 
-	char *tok = strtok(str, delim);
-	while (tok)
-	{
-		// Ensure room for tokens + final NULL
-		if (count + 1 >= (int)capacity)
-		{
-			capacity += 20;
-			if ((arr = realloc(arr, capacity * sizeof(char *))) == NULL)
-				err_n_die("realloc error 1");
-		}
-		
-		arr[count++] = tok;
-		tok = strtok(NULL, delim);
+	char *tok = strtok2(str, delim);
+	for (; tok && count < dest_cap - 1; count++){
+		dest[count] = tok;
+		tok = strtok2(NULL, delim);
 	}
+	dest[count] = NULL;
 	
-	arr[count] = NULL;
-	return arr;
+	return count;
 }
 
 /**
