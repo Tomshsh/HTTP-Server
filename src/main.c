@@ -18,50 +18,55 @@
 #define MAX_CLIENTS 10
 
 #define HDR_200 "HTTP/1.1 200 OK\r\n"
-#define HDR_404 "HTTP/1.1 404 Not Found\r\n"
 #define HDR_201 "HTTP/1.1 201 Created\r\n"
-#define HDR_CONTENT_TYPE "Content-Type: "
-#define CONTENT_TYPE_TEXT "text/plain\r\n"
-#define CONTENT_TYPE_OCT_STREAM "application/octet-stream\r\n"
-#define CONTENT_LEN "Content-Length: %zu\r\n"
+#define HDR_202 "HTTP/1.1 202 Accepted\r\n"
+#define HDR_404 "HTTP/1.1 404 Not Found\r\n"
+#define HDR_MAX 4
 
-#define success_headers HDR_200 HDR_CONTENT_TYPE CONTENT_TYPE_TEXT CONTENT_LEN "\r\n"
-#define error_headers HDR_404 "\r\n"
+#define HDR_CONTENT_TYPE "Content-Type: "
+#define CONTENT_TYPE_TEXT "text/plain"
+#define CONTENT_TYPE_OCT_STREAM "application/octet-stream"
+#define CONTENT_TYPE_JSON "application/json"
+#define CONTENT_LEN "Content-Length: %zu"
+#define CONT_TYPES_MAX 3
+
+#define RN "\r\n"
+
+#define success_headers HDR_200 HDR_CONTENT_TYPE CONTENT_TYPE_TEXT RN CONTENT_LEN RN
+#define error_headers HDR_404 RN
 // #define success_response(buff, body) snprintf((char *)buff, MAXLINE, success_headers "%s", strlen(body), body)
 
 enum CONTENT_TYPE {
 	CONT_TYPE_TEXT,
 	CONT_TYPE_OCT_STREAM,
 	CONT_TYPE_JSON,
-	CONT_TYPE_NONE
 };
 
-static inline int success_response(char *buff, enum CONTENT_TYPE type, char *body){
-	char content_type[50];
-	char content_length[50];
-	
-	switch (type)
-	{
-		case CONT_TYPE_TEXT:
-			memcpy(content_type, HDR_CONTENT_TYPE CONTENT_TYPE_TEXT, sizeof(content_type));
-			break;
-		case CONT_TYPE_OCT_STREAM:
-			memcpy(content_type, HDR_CONTENT_TYPE CONTENT_TYPE_OCT_STREAM, sizeof(content_type));
-			break;
-		case CONT_TYPE_NONE:
-			memcpy(content_type, "", 0);
-		case CONT_TYPE_JSON:
-			// todo
-			break;
-		
-		default:
-			break;
-	}
+enum RES_CODE {
+	H200, H201, H202, H404
+};
 
-	if (body && strlen(body))
-		snprintf(content_length, 50, CONTENT_LEN, strlen(body));
+static const char *const response_codes[HDR_MAX] = {
+	[H200]	= HDR_200,
+	[H201]	= HDR_201,
+	[H202]	= HDR_202,
+	[H404]	= HDR_404
+};
 
-	return snprintf(buff, 8092, HDR_200 "%s%s\r\n%s", content_type, content_length, body);
+static const char *const content_types[CONT_TYPES_MAX] = {
+	[CONT_TYPE_TEXT]		= HDR_CONTENT_TYPE CONTENT_TYPE_TEXT RN,
+	[CONT_TYPE_JSON]		= HDR_CONTENT_TYPE CONTENT_TYPE_JSON RN,
+	[CONT_TYPE_OCT_STREAM]	= HDR_CONTENT_TYPE CONTENT_TYPE_OCT_STREAM RN,
+};
+
+static inline int success_response(char *buff, enum CONTENT_TYPE type, enum RES_CODE res_code, char *body)
+{
+	char temp = '\0';
+	if (!body) body = (void *)&temp;
+
+	int sz = snprintf(buff, 8092, "%s%s" CONTENT_LEN RN RN "%s", response_codes[res_code], content_types[type], strlen(body), body);
+
+	return sz;
 }
 
 int err_n_die(const char *fmt, ...)
@@ -164,16 +169,16 @@ char *str_array_find(char **a, const char *substr)
 
 int handle_post_request(char *buff, char *url, char **req_headers, char *req_body, int argc, char **argv)
 {
-	char *base_url 	= strtok(url,  "/");;
+	char *base_url 	= strtok(url + 1,  "/");
 	char *url_arg  	= url_arg = strtok(NULL, "");
-	
+
 	char *cont_type;
 	{
 		char *header = str_array_find(req_headers, "Content-Type");
 		if (header)
 		{
-			strtok(header, ": ");
-			cont_type = strtok(NULL, "");
+			strtok2(header, ": ");
+			cont_type = strtok2(NULL, "");
 		}
 	}
 
@@ -182,26 +187,33 @@ int handle_post_request(char *buff, char *url, char **req_headers, char *req_bod
 		char *header = str_array_find(req_headers, "Content-Length");
 		if (header)
 		{
-			strtok(header, ": ");
-			cont_len = atoi(strtok(NULL, "\r\n"));
+			strtok2(header, ": ");
+			cont_len = atoi(strtok2(NULL, "\r\n"));
 		}
 	}
 
-	printf ("POST %s requested\n", url);
+	printf ("POST %s requested\n", base_url);
 
 	if (!strcmp(base_url, "files")){
 		if (argc < 3 || strcmp(cont_type, CONTENT_TYPE_OCT_STREAM))
 			return snprintf(buff, MAXLINE, error_headers);
 
 		if (!cont_len)
-			return success_response(buff, CONT_TYPE_NONE, NULL);
+			return success_response(buff, CONT_TYPE_OCT_STREAM, H200, NULL);
 
 		char *file_name;
 		snprintf(file_name, MAXLINE, "%s/%s", argv[2], url_arg);
 		FILE *f = fopen(file_name, "w");
-		size_t n = fwrite(req_body, 1, cont_len, f);
+		if (!f) return snprintf(buff, MAXLINE, error_headers);
 
-		success_response(buff, CONT_TYPE_NONE, NULL);
+		size_t n = fwrite(req_body, cont_len, 1, f);
+		if (n != 1){
+			fclose(f);
+			return snprintf(buff, MAXLINE, error_headers);
+		}
+
+		fclose(f);
+		return success_response(buff, CONT_TYPE_OCT_STREAM, H201, NULL);
 	}
 }
 
@@ -224,11 +236,11 @@ int handle_get_request(char *buff, char *url, char **req_headers, int argc, char
 		snprintf(buff, MAXLINE, error_headers);
 
 	else if (!strcmp(base_url, "echo"))
-		success_response(buff, CONT_TYPE_TEXT, url_arg);
+		success_response(buff, CONT_TYPE_TEXT, H200, url_arg);
 
 	else if (!strcmp(base_url, "user-agent"))
 		if ((user_agent = str_array_find(req_headers, "User-Agent:")))
-			success_response(buff, CONT_TYPE_TEXT, &user_agent[12]);
+			success_response(buff, CONT_TYPE_TEXT, H200, &user_agent[12]);
 		else
 			snprintf(buff, MAXLINE, error_headers);
 
@@ -251,7 +263,7 @@ int handle_get_request(char *buff, char *url, char **req_headers, int argc, char
 			else if (0 > (sz = fread(data, 1, MAXLINE, f)))
 				snprintf(buff, MAXLINE, error_headers);
 			
-			else success_response(buff, CONT_TYPE_OCT_STREAM, data);
+			else success_response(buff, CONT_TYPE_OCT_STREAM, H200, data);
 		}
 	}
 	else 
