@@ -64,7 +64,9 @@ static inline int success_response(char *buff, enum CONTENT_TYPE type, enum RES_
 	char temp = '\0';
 	if (!body) body = (void *)&temp;
 
+	printf("forming the success response\n");
 	int sz = snprintf(buff, 8092, "%s%s" CONTENT_LEN RN RN "%s", response_codes[res_code], content_types[type], strlen(body), body);
+	printf("succes response written into buff\n");
 
 	return sz;
 }
@@ -193,28 +195,47 @@ int handle_post_request(char *buff, char *url, char **req_headers, char *req_bod
 	}
 
 	printf ("POST %s requested\n", base_url);
+	printf ("arg: %s\n", url_arg);
 
 	if (!strcmp(base_url, "files")){
+		printf("iffing\n");
 		if (argc < 3 || strcmp(cont_type, CONTENT_TYPE_OCT_STREAM))
+		{
+			printf("insufficient args\n");
 			return snprintf(buff, MAXLINE, error_headers);
+		}
 
 		if (!cont_len)
+		{
+			printf("no content length header\n");
 			return success_response(buff, CONT_TYPE_OCT_STREAM, H200, NULL);
+		}
 
 		char *file_name;
 		snprintf(file_name, MAXLINE, "%s/%s", argv[2], url_arg);
+		printf("%s\n", file_name);
 		FILE *f = fopen(file_name, "w");
-		if (!f) return snprintf(buff, MAXLINE, error_headers);
+		printf("opened\n");
+		if (!f) {
+			printf("no luck opening file\n");
+			return snprintf(buff, MAXLINE, error_headers);
+		}
 
 		size_t n = fwrite(req_body, cont_len, 1, f);
+		printf("written\n");
 		if (n != 1){
+			printf("error writing to file\n");
 			fclose(f);
 			return snprintf(buff, MAXLINE, error_headers);
 		}
 
-		fclose(f);
+		printf("before fclose\n");
+		int err = fclose(f);
+		printf("%d\n", err);
 		return success_response(buff, CONT_TYPE_OCT_STREAM, H201, NULL);
 	}
+
+	printf("not files\n");
 }
 
 
@@ -394,6 +415,7 @@ int main(int argc, char **argv)
 				continue;
 			}
 			
+			printf("%s\n", buff);
 			
 			write(events[i].data.fd, buff, strlen((char *)buff));
 			memset(req_headers, 0, sizeof(req_headers));
