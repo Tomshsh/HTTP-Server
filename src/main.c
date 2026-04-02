@@ -198,7 +198,6 @@ int handle_post_request(char *buff, char *url, char **req_headers, char *req_bod
 	printf ("arg: %s\n", url_arg);
 
 	if (!strcmp(base_url, "files")){
-		printf("iffing\n");
 		if (argc < 3 || strcmp(cont_type, CONTENT_TYPE_OCT_STREAM))
 		{
 			printf("insufficient args\n");
@@ -215,27 +214,21 @@ int handle_post_request(char *buff, char *url, char **req_headers, char *req_bod
 		snprintf(file_name, MAXLINE, "%s/%s", argv[2], url_arg);
 		printf("%s\n", file_name);
 		FILE *f = fopen(file_name, "w");
-		printf("opened\n");
 		if (!f) {
-			printf("no luck opening file\n");
+			printf("file failed to open\n");
 			return snprintf(buff, MAXLINE, error_headers);
 		}
 
 		size_t n = fwrite(req_body, cont_len, 1, f);
-		printf("written\n");
 		if (n != 1){
 			printf("error writing to file\n");
 			fclose(f);
 			return snprintf(buff, MAXLINE, error_headers);
 		}
 
-		printf("before fclose\n");
-		int err = fclose(f);
-		printf("%d\n", err);
 		return success_response(buff, CONT_TYPE_OCT_STREAM, H201, NULL);
 	}
 
-	printf("not files\n");
 }
 
 
