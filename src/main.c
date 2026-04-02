@@ -211,7 +211,7 @@ int handle_post_request(char *buff, char *url, char **req_headers, char *req_bod
 			return success_response(buff, CONT_TYPE_OCT_STREAM, H200, NULL);
 		}
 
-		char *file_name;
+		char file_name[256];
 		snprintf(file_name, MAXLINE, "%s/%s", argv[2], url_arg);
 		printf("%s\n", file_name);
 		FILE *f = fopen(file_name, "w");
