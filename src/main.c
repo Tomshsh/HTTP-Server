@@ -17,23 +17,29 @@
 #define MAX_EVENTS 10
 #define MAX_CLIENTS 10
 
-#define HDR_200 "HTTP/1.1 200 OK\r\n"
-#define HDR_201 "HTTP/1.1 201 Created\r\n"
-#define HDR_202 "HTTP/1.1 202 Accepted\r\n"
-#define HDR_404 "HTTP/1.1 404 Not Found\r\n"
+#define HDR_200 "HTTP/1.1 200 OK"
+#define HDR_201 "HTTP/1.1 201 Created"
+#define HDR_202 "HTTP/1.1 202 Accepted"
+#define HDR_404 "HTTP/1.1 404 Not Found"
 #define HDR_MAX 4
 
 #define HDR_CONTENT_TYPE "Content-Type: "
+#define HDR_CONTENT_LEN "Content-Length: %zu"
+#define HDR_CONTENT_ENCODING "Content-Encoding: "
+
 #define CONTENT_TYPE_TEXT "text/plain"
 #define CONTENT_TYPE_OCT_STREAM "application/octet-stream"
 #define CONTENT_TYPE_JSON "application/json"
-#define CONTENT_LEN "Content-Length: %zu"
 #define CONT_TYPES_MAX 3
+
+#define NO_ENCODING ""
+#define ENCODING_GZIP "gzip"
+#define ENCODING_START 1
+#define ENCODING_MAX 2
 
 #define RN "\r\n"
 
-#define success_headers HDR_200 HDR_CONTENT_TYPE CONTENT_TYPE_TEXT RN CONTENT_LEN RN
-#define error_headers HDR_404 RN
+#define error_headers HDR_404 RN RN
 // #define success_response(buff, body) snprintf((char *)buff, MAXLINE, success_headers "%s", strlen(body), body)
 
 enum CONTENT_TYPE {
@@ -46,6 +52,11 @@ enum RES_CODE {
 	H200, H201, H202, H404
 };
 
+enum CONTENT_ENCODING {
+	NO_ENCOD,
+	ENCOD_GZIP
+};
+
 static const char *const response_codes[HDR_MAX] = {
 	[H200]	= HDR_200,
 	[H201]	= HDR_201,
@@ -54,18 +65,28 @@ static const char *const response_codes[HDR_MAX] = {
 };
 
 static const char *const content_types[CONT_TYPES_MAX] = {
-	[CONT_TYPE_TEXT]		= HDR_CONTENT_TYPE CONTENT_TYPE_TEXT RN,
-	[CONT_TYPE_JSON]		= HDR_CONTENT_TYPE CONTENT_TYPE_JSON RN,
-	[CONT_TYPE_OCT_STREAM]	= HDR_CONTENT_TYPE CONTENT_TYPE_OCT_STREAM RN,
+	[CONT_TYPE_TEXT]		= CONTENT_TYPE_TEXT,
+	[CONT_TYPE_JSON]		= CONTENT_TYPE_JSON,
+	[CONT_TYPE_OCT_STREAM]	= CONTENT_TYPE_OCT_STREAM,
 };
 
-static inline int success_response(char *buff, enum CONTENT_TYPE type, enum RES_CODE res_code, char *body)
+static const char *const content_encodings[ENCODING_MAX] = {
+	[NO_ENCOD]		= NO_ENCODING,
+	[ENCOD_GZIP]	= ENCODING_GZIP,
+};
+
+static inline int success_response(char *buff, enum CONTENT_TYPE type, enum CONTENT_ENCODING encod, enum RES_CODE res_code, char *body)
 {
 	char temp = '\0';
 	if (!body) body = (void *)&temp;
 
+	char optional_cont_encod[100] = "";
+	if (encod != NO_ENCOD) snprintf(optional_cont_encod, 100, HDR_CONTENT_ENCODING "%s" RN, content_encodings[encod]);
+
 	printf("forming the success response\n");
-	int sz = snprintf(buff, 8092, "%s%s" CONTENT_LEN RN RN "%s", response_codes[res_code], content_types[type], strlen(body), body);
+	int sz = snprintf(buff, 8092, "%s" RN HDR_CONTENT_TYPE "%s" RN "%s" HDR_CONTENT_LEN RN RN "%s", 
+						response_codes[res_code], content_types[type], optional_cont_encod, strlen(body), body
+					);
 	printf("succes response written into buff\n");
 
 	return sz;
@@ -190,7 +211,20 @@ int handle_post_request(char *buff, char *url, char **req_headers, char *req_bod
 		if (header)
 		{
 			strtok2(header, ": ");
-			cont_len = atoi(strtok2(NULL, "\r\n"));
+			cont_len = atoi(strtok2(NULL, RN));
+		}
+	}
+
+	enum CONTENT_ENCODING cont_encoding = NO_ENCOD;
+	{
+		char *header = str_array_find(req_headers, "Accept-Encoding");
+		if (header)
+		{
+			strtok2(header, ": ");
+			char *req_encod = strtok2(NULL, "");
+			for (int i = ENCODING_START; i < ENCODING_MAX; i ++)
+				if (strstr(req_encod, content_encodings[i]))
+					cont_encoding = i;
 		}
 	}
 
@@ -207,12 +241,12 @@ int handle_post_request(char *buff, char *url, char **req_headers, char *req_bod
 		if (!cont_len)
 		{
 			printf("no content length header\n");
-			return success_response(buff, CONT_TYPE_OCT_STREAM, H200, NULL);
+			return success_response(buff, CONT_TYPE_OCT_STREAM, cont_encoding, H200, NULL);
 		}
 
 		char file_name[256];
 		snprintf(file_name, MAXLINE, "%s/%s", argv[2], url_arg);
-		printf("%s\n", file_name);
+		printf("write content: %s to file: %s\n", req_body, file_name);
 		FILE *f = fopen(file_name, "w");
 		if (!f) {
 			printf("file failed to open\n");
@@ -232,7 +266,7 @@ int handle_post_request(char *buff, char *url, char **req_headers, char *req_bod
 			return snprintf(buff, MAXLINE, error_headers);
 		}
 
-		return success_response(buff, CONT_TYPE_OCT_STREAM, H201, NULL);
+		return success_response(buff, CONT_TYPE_OCT_STREAM, cont_encoding, H201, NULL);
 	}
 
 }
@@ -247,6 +281,25 @@ int handle_get_request(char *buff, char *url, char **req_headers, int argc, char
 	char *base_url = strtok(url,  "/");
 	char *url_arg = strtok(NULL, "");
 
+	enum CONTENT_ENCODING cont_encoding = NO_ENCOD;
+	{
+		char *header = str_array_find(req_headers, "Accept-Encoding");
+		if (header)
+		{
+			strtok2(header, ": ");
+			char *req_encod = strtok2(NULL, "");
+			printf("requested encoding: %s\n", req_encod);
+			for (int i = ENCODING_START; i < ENCODING_MAX; i++)
+			{
+				printf("projected encoding: %s\n", content_encodings[i]);
+				if (strstr(req_encod, content_encodings[i])){
+					printf("match\n");
+					cont_encoding = i;
+				}
+			}
+		}
+	}
+
 	printf("GET %s/%s requested\n", url, url_arg);
 
 	if (!strcmp(url, "/"))
@@ -256,11 +309,11 @@ int handle_get_request(char *buff, char *url, char **req_headers, int argc, char
 		snprintf(buff, MAXLINE, error_headers);
 
 	else if (!strcmp(base_url, "echo"))
-		success_response(buff, CONT_TYPE_TEXT, H200, url_arg);
+		success_response(buff, CONT_TYPE_TEXT, cont_encoding, H200, url_arg);
 
 	else if (!strcmp(base_url, "user-agent"))
 		if ((user_agent = str_array_find(req_headers, "User-Agent:")))
-			success_response(buff, CONT_TYPE_TEXT, H200, &user_agent[12]);
+			success_response(buff, CONT_TYPE_TEXT, cont_encoding, H200, &user_agent[12]);
 		else
 			snprintf(buff, MAXLINE, error_headers);
 
@@ -283,7 +336,7 @@ int handle_get_request(char *buff, char *url, char **req_headers, int argc, char
 			else if (0 > (sz = fread(data, 1, MAXLINE, f)))
 				snprintf(buff, MAXLINE, error_headers);
 			
-			else success_response(buff, CONT_TYPE_OCT_STREAM, H200, data);
+			else success_response(buff, CONT_TYPE_OCT_STREAM, cont_encoding, H200, data);
 		}
 	}
 	else 
