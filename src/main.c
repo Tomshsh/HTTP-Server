@@ -226,6 +226,12 @@ int handle_post_request(char *buff, char *url, char **req_headers, char *req_bod
 			return snprintf(buff, MAXLINE, error_headers);
 		}
 
+		int err = fclose(f);
+		if (err){
+			printf("error closing file\n");
+			return snprintf(buff, MAXLINE, error_headers);
+		}
+
 		return success_response(buff, CONT_TYPE_OCT_STREAM, H201, NULL);
 	}
 
