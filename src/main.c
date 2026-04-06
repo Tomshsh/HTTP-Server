@@ -162,11 +162,12 @@ char *strtok2(char *str, char *delim)
  * @brief splits text by delimiter, storing pointers to positions of the original text.
  * 
  * @param dest string array containing the split elements - must keep space for final NULL item
+ * @param dest_cap size of dest - number of items 
  * @param str text to split, gets menipulated
  * @param delim delimiter string
  * @return ssize_t - number of aplit elements inside dest 
  */
-size_t split(char **dest, size_t dest_cap, char *str, char *delim)
+size_t split(char **dest, int dest_cap, char *str, char *delim)
 {
 	int 	count = 0;
 
@@ -226,9 +227,12 @@ int handle_post_request(char *buff, char *url, char **req_headers, char *req_bod
 		{
 			strtok2(header, ": ");
 			char *req_encod = strtok2(NULL, "");
-			for (int i = ENCODING_START; i < ENCODING_MAX; i ++)
-				if (strstr(req_encod, content_encodings[i]))
-					cont_encoding = i;
+			char *dest[10] = {0};
+			split(dest, 10, req_encod, ",");
+			for (int j = 0; j < 10; j++)
+				for (int i = ENCODING_START; i < ENCODING_MAX; i ++)
+					if (!strcmp(dest[j], content_encodings[i]))
+						cont_encoding = i;
 		}
 	}
 
@@ -292,15 +296,12 @@ int handle_get_request(char *buff, char *url, char **req_headers, int argc, char
 		{
 			strtok2(header, ": ");
 			char *req_encod = strtok2(NULL, "");
-			printf("requested encoding: %s\n", req_encod);
-			for (int i = ENCODING_START; i < ENCODING_MAX; i++)
-			{
-				printf("projected encoding: %s\n", content_encodings[i]);
-				if (strstr(req_encod, content_encodings[i])){
-					printf("match\n");
-					cont_encoding = i;
-				}
-			}
+			char *dest[10] = {0};
+			split(dest, 10, req_encod, ",");
+			for (int j = 0; j < 10; j++)
+				for (int i = ENCODING_START; i < ENCODING_MAX; i ++)
+					if (!strcmp(dest[j], content_encodings[i]))
+						cont_encoding = i;
 		}
 	}
 
