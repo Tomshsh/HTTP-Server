@@ -83,11 +83,15 @@ static inline int success_response(char *buff, enum CONTENT_TYPE type, enum CONT
 	char optional_cont_encod[100] = "";
 	if (encod != NO_ENCOD) snprintf(optional_cont_encod, 100, HDR_CONTENT_ENCODING "%s" RN, content_encodings[encod]);
 
-	printf("forming the success response\n");
-	int sz = snprintf(buff, 8092, "%s" RN HDR_CONTENT_TYPE "%s" RN "%s" HDR_CONTENT_LEN RN RN "%s", 
-						response_codes[res_code], content_types[type], optional_cont_encod, strlen(body), body
+	char optional_cont_type[100] = "";
+	if (body && strlen(body) > 0) snprintf(optional_cont_type, 100, HDR_CONTENT_TYPE "%s" RN, content_types[type]);
+
+	char optional_cont_length[100] = "";
+	if (body && strlen(body) > 0) snprintf(optional_cont_length, 100, HDR_CONTENT_LEN RN, strlen(body));
+
+	int sz = snprintf(buff, 8092, "%s" RN "%s%s%s" RN "%s", 
+						response_codes[res_code], optional_cont_type, optional_cont_encod, optional_cont_length, body
 					);
-	printf("succes response written into buff\n");
 
 	return sz;
 }
@@ -303,7 +307,7 @@ int handle_get_request(char *buff, char *url, char **req_headers, int argc, char
 	printf("GET %s/%s requested\n", url, url_arg);
 
 	if (!strcmp(url, "/"))
-		snprintf(buff, MAXLINE, HDR_200 "\r\n");
+		success_response(buff, CONT_TYPE_TEXT, cont_encoding, H200, "");
 
 	else if (!base_url)
 		snprintf(buff, MAXLINE, error_headers);
