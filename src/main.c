@@ -15,7 +15,7 @@
 #define MAX_EVENTS 10
 #define MAX_CLIENTS 10
 
-static inline size_t success_response(char *buff, enum CONTENT_TYPE type, enum CONTENT_ENCODING encod, enum RES_CODE res_code, char *body)
+static inline size_t success_response(char *buff, enum CONTENT_TYPE type, enum CONTENT_ENCODING encod, enum RES_CODE res_code, int close, char *body)
 {
 
 	char ch = '\0';
@@ -51,8 +51,11 @@ static inline size_t success_response(char *buff, enum CONTENT_TYPE type, enum C
 	char optional_cont_length[100] = "";
 	if (size > 0) snprintf(optional_cont_length, 100, HDR_CONTENT_LEN RN, size);
 
-	int sz = snprintf(buff, 8092, "%s" RN "%s%s%s" RN, 
-						response_codes[res_code], optional_cont_type, optional_cont_encod, optional_cont_length
+	char optional_conn_close[100] = "";
+	if (close) snprintf(optional_conn_close, 100, HDR_CONNECTION_CLOSE RN);
+
+	int sz = snprintf(buff, 8092, "%s" RN "%s%s%s%s" RN, 
+						response_codes[res_code], optional_cont_type, optional_cont_encod, optional_cont_length, optional_conn_close
 					);
 
 	if (size > 0) memcpy(buff + sz, out_p, size);
@@ -101,16 +104,23 @@ void parse_http_headers(char **src, http_headers *target)
 						target->cont_encoding = i;
 		}
 	}
+
+	target->close = 0;
+	{
+		char *header = str_array_find(src, "Connection: close");
+		if (header) target->close = 1;
+	}
 }
 
 
-size_t handle_post_request(char *buff, char *url, char **req_headers, char *req_body, int argc, char **argv)
+size_t handle_post_request(char *buff, char *url, char **req_headers, char *req_body, int *conn_close, int argc, char **argv)
 {
 	http_headers headers;
 	char *base_url 		 	= strtok(url + 1,  "/");
 	char *url_arg  			= url_arg = strtok(NULL, "");
 	
 	parse_http_headers(req_headers, &headers);
+	*conn_close = headers.close;
 
 	printf ("POST %s requested\n", base_url);
 	printf ("arg: %s\n", url_arg);
@@ -125,7 +135,7 @@ size_t handle_post_request(char *buff, char *url, char **req_headers, char *req_
 		if (!headers.cont_len)
 		{
 			printf("no content length header\n");
-			return success_response(buff, CONT_TYPE_OCT_STREAM, headers.cont_encoding, H200, NULL);
+			return success_response(buff, CONT_TYPE_OCT_STREAM, headers.cont_encoding, H200, headers.close, NULL);
 		}
 
 		char file_name[256];
@@ -149,7 +159,7 @@ size_t handle_post_request(char *buff, char *url, char **req_headers, char *req_
 			return snprintf(buff, MAXLINE, error_headers);
 		}
 
-		return success_response(buff, CONT_TYPE_OCT_STREAM, headers.cont_encoding, H201, NULL);
+		return success_response(buff, CONT_TYPE_OCT_STREAM, headers.cont_encoding, H201, headers.close, NULL);
 	}
 
 }
@@ -160,7 +170,7 @@ size_t handle_post_request(char *buff, char *url, char **req_headers, char *req_
  * 
  * 
  */
-int handle_get_request(char *buff, char *url, char **req_headers, int argc, char **argv)
+int handle_get_request(char *buff, char *url, char **req_headers, int *conn_close, int argc, char **argv)
 {
 	char *user_agent;
 	char *base_url = strtok(url,  "/");
@@ -168,21 +178,22 @@ int handle_get_request(char *buff, char *url, char **req_headers, int argc, char
 	http_headers headers;
 
 	parse_http_headers(req_headers, &headers);
+	*conn_close = headers.close;
 
 	printf("GET /%s/%s requested\n", base_url, url_arg);
 
 	if (!strcmp(url, "/"))
-		return success_response(buff, CONT_TYPE_TEXT, headers.cont_encoding, H200, "");
+		return success_response(buff, CONT_TYPE_TEXT, headers.cont_encoding, H200, headers.close, "");
 
 	else if (!base_url)
 		return snprintf(buff, MAXLINE, error_headers);
 
 	else if (!strcmp(base_url, "echo"))
-		return success_response(buff, CONT_TYPE_TEXT, headers.cont_encoding, H200, url_arg);
+		return success_response(buff, CONT_TYPE_TEXT, headers.cont_encoding, H200, headers.close, url_arg);
 
 	else if (!strcmp(base_url, "user-agent"))
 		if ((user_agent = str_array_find(req_headers, "User-Agent:")))
-			return success_response(buff, CONT_TYPE_TEXT, headers.cont_encoding, H200, &user_agent[12]);
+			return success_response(buff, CONT_TYPE_TEXT, headers.cont_encoding, H200, headers.close, &user_agent[12]);
 		else
 			return snprintf(buff, MAXLINE, error_headers);
 
@@ -206,7 +217,7 @@ int handle_get_request(char *buff, char *url, char **req_headers, int argc, char
 				return snprintf(buff, MAXLINE, error_headers);
 			
 			else 
-				return success_response(buff, CONT_TYPE_OCT_STREAM, headers.cont_encoding, H200, data);
+				return success_response(buff, CONT_TYPE_OCT_STREAM, headers.cont_encoding, H200, headers.close, data);
 		}
 	}
 	else
@@ -296,6 +307,7 @@ int main(int argc, char **argv)
 		char 			   *split_line[3] = {0};
 		char 			   *req_headers[10] = {0};
 		char 			   *req_url;
+		int 			   conn_close = 0;
 
 		// wait for http request events, then read request from each events connection fd
 		if (-1 == (nfds = epoll_wait(epollfd, events, MAX_EVENTS, 1)))
@@ -323,12 +335,12 @@ int main(int argc, char **argv)
 			char *url = strtok(NULL, " ");
 	
 			if (strstr(method, "GET"))
-				res_size = handle_get_request((char *)buff, url, req_headers + 1, argc, argv);
+				res_size = handle_get_request((char *)buff, url, req_headers + 1, &conn_close, argc, argv);
 			
 			else if (strstr(method, "POST"))
 			{
 				if (!body) continue;
-				res_size = handle_post_request((char *)buff, url, req_headers + 1, body, argc, argv);
+				res_size = handle_post_request((char *)buff, url, req_headers + 1, body, &conn_close, argc, argv);
 			}
 
 			else{
@@ -340,6 +352,7 @@ int main(int argc, char **argv)
 			
 			write(events[i].data.fd, buff, res_size);
 			memset(req_headers, 0, sizeof(req_headers));
+			if (conn_close) close(events[i].data.fd);
 		}
 
 

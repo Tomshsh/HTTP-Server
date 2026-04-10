@@ -7,6 +7,7 @@
 #define HDR_CONTENT_TYPE "Content-Type: "
 #define HDR_CONTENT_LEN "Content-Length: %zu"
 #define HDR_CONTENT_ENCODING "Content-Encoding: "
+#define HDR_CONNECTION_CLOSE "Connection: close"
 
 #define CONTENT_TYPE_TEXT "text/plain"
 #define CONTENT_TYPE_OCT_STREAM "application/octet-stream"
@@ -60,4 +61,5 @@ typedef struct http_headers_t{
 	enum CONTENT_ENCODING cont_encoding;
 	char *cont_type;
 	int cont_len;
+	int close;
 } http_headers;
