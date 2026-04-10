@@ -1,267 +1,142 @@
-#include <stdio.h>
-#include <stdlib.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <netinet/ip.h>
-#include <string.h>
 #include <errno.h>
-#include <unistd.h>
-#include <stdarg.h>
 #include <arpa/inet.h>
 #include <sys/epoll.h>
 #include <fcntl.h>
-#include <unistd.h>
+#include <stdlib.h>
+#include "global.h"
+#include "encoding.h"
+#include "utils.h"
 
 #define SERVER_PORT 4221
 #define MAXLINE 4096
 #define MAX_EVENTS 10
 #define MAX_CLIENTS 10
 
-#define HDR_200 "HTTP/1.1 200 OK"
-#define HDR_201 "HTTP/1.1 201 Created"
-#define HDR_202 "HTTP/1.1 202 Accepted"
-#define HDR_404 "HTTP/1.1 404 Not Found"
-#define HDR_MAX 4
-
-#define HDR_CONTENT_TYPE "Content-Type: "
-#define HDR_CONTENT_LEN "Content-Length: %zu"
-#define HDR_CONTENT_ENCODING "Content-Encoding: "
-
-#define CONTENT_TYPE_TEXT "text/plain"
-#define CONTENT_TYPE_OCT_STREAM "application/octet-stream"
-#define CONTENT_TYPE_JSON "application/json"
-#define CONT_TYPES_MAX 3
-
-#define NO_ENCODING ""
-#define ENCODING_GZIP "gzip"
-#define ENCODING_START 1
-#define ENCODING_MAX 2
-
-#define RN "\r\n"
-
-#define error_headers HDR_404 RN RN
-// #define success_response(buff, body) snprintf((char *)buff, MAXLINE, success_headers "%s", strlen(body), body)
-
-enum CONTENT_TYPE {
-	CONT_TYPE_TEXT,
-	CONT_TYPE_OCT_STREAM,
-	CONT_TYPE_JSON,
-};
-
-enum RES_CODE {
-	H200, H201, H202, H404
-};
-
-enum CONTENT_ENCODING {
-	NO_ENCOD,
-	ENCOD_GZIP
-};
-
-static const char *const response_codes[HDR_MAX] = {
-	[H200]	= HDR_200,
-	[H201]	= HDR_201,
-	[H202]	= HDR_202,
-	[H404]	= HDR_404
-};
-
-static const char *const content_types[CONT_TYPES_MAX] = {
-	[CONT_TYPE_TEXT]		= CONTENT_TYPE_TEXT,
-	[CONT_TYPE_JSON]		= CONTENT_TYPE_JSON,
-	[CONT_TYPE_OCT_STREAM]	= CONTENT_TYPE_OCT_STREAM,
-};
-
-static const char *const content_encodings[ENCODING_MAX] = {
-	[NO_ENCOD]		= NO_ENCODING,
-	[ENCOD_GZIP]	= ENCODING_GZIP,
-};
-
-static inline int success_response(char *buff, enum CONTENT_TYPE type, enum CONTENT_ENCODING encod, enum RES_CODE res_code, char *body)
+static inline size_t success_response(char *buff, enum CONTENT_TYPE type, enum CONTENT_ENCODING encod, enum RES_CODE res_code, char *body)
 {
-	char temp = '\0';
-	if (!body) body = (void *)&temp;
+
+	char ch = '\0';
+	if (!body) body = (void *)&ch;
+
+	FILE 	*in, *out;
+	size_t	size = strlen(body);
+	char 	*out_p = body;
 
 	char optional_cont_encod[100] = "";
-	if (encod != NO_ENCOD) snprintf(optional_cont_encod, 100, HDR_CONTENT_ENCODING "%s" RN, content_encodings[encod]);
+	if (encod != NO_ENCOD) {
+		snprintf(optional_cont_encod, 100, HDR_CONTENT_ENCODING "%s" RN, content_encodings[encod]);
+		in = fmemopen(body, strlen(body), "r");
+		out = open_memstream(&out_p, &size);
+
+		if(!in || !out) perror("memopen");
+		else {
+			if (encod == ENCOD_GZIP){
+				int ret = gzip_defl(in, out, -1);
+				if (ret != Z_OK)
+					printf("Compression failed: %d\n", ret);
+			}
+			
+			fclose(in);
+			fclose(out);
+		}
+
+	}
 
 	char optional_cont_type[100] = "";
-	if (body && strlen(body) > 0) snprintf(optional_cont_type, 100, HDR_CONTENT_TYPE "%s" RN, content_types[type]);
+	if (size > 0) snprintf(optional_cont_type, 100, HDR_CONTENT_TYPE "%s" RN, content_types[type]);
 
 	char optional_cont_length[100] = "";
-	if (body && strlen(body) > 0) snprintf(optional_cont_length, 100, HDR_CONTENT_LEN RN, strlen(body));
+	if (size > 0) snprintf(optional_cont_length, 100, HDR_CONTENT_LEN RN, size);
 
-	int sz = snprintf(buff, 8092, "%s" RN "%s%s%s" RN "%s", 
-						response_codes[res_code], optional_cont_type, optional_cont_encod, optional_cont_length, body
+	int sz = snprintf(buff, 8092, "%s" RN "%s%s%s" RN, 
+						response_codes[res_code], optional_cont_type, optional_cont_encod, optional_cont_length
 					);
 
-	return sz;
-}
+	if (size > 0) memcpy(buff + sz, out_p, size);
 
-int err_n_die(const char *fmt, ...)
-{
-	int 	errno_save;
-	va_list ap;
-
-	errno_save = errno;
-
-	va_start(ap, fmt);
-	vfprintf(stdout, fmt, ap);
-	fprintf(stdout, "\n");
-	fflush(stdout);
-
-	if (errno_save != 0)
-	{
-		fprintf(stdout, "(errno = %d) : %s\n", errno_save,
-				strerror(errno_save));
-		fprintf(stdout, "\n");
-		fflush(stdout);
-	}
-	va_end(ap);
-
-	exit(1);
+	return sz + size;
 }
 
 /**
- * @brief splits str by provided delim string. 
- * unlilke strtok, the delimiter is evaluated as the entire string instead its individual characters.
+ * @param src array of strings, each item should contain one http-header
+ * @param target pointer to a `http_headers` type, will be populated by the respective values taken from src
  */
-char *strtok2(char *str, char *delim)
+void parse_http_headers(char **src, http_headers *target)
 {
-	static char *str_p;
-	char *delim_pos;
-	char *start_pos;
-	size_t delim_len;
-
-	if (str != NULL) str_p = str;
-
-	if (str_p == NULL || *str_p == '\0')
-		return NULL;
-
-	if (delim == NULL || *delim == '\0')
+	target->cont_type = NULL;
 	{
-		start_pos = str_p;
-		str_p = NULL;
-		return start_pos;
-	}
-
-	start_pos = str_p;
-
-	delim_pos = strstr(str_p, delim);
-	delim_len = strlen(delim);
-
-	if (delim_pos != NULL)
-	{
-		*delim_pos = '\0';
-		str_p = delim_pos + delim_len;
-	}
-	else str_p = NULL;
-
-	return start_pos;
-}
-
-/**
- * @brief splits text by delimiter, storing pointers to positions of the original text.
- * 
- * @param dest string array containing the split elements - must keep space for final NULL item
- * @param dest_cap size of dest - number of items 
- * @param str text to split, gets menipulated
- * @param delim delimiter string
- * @return ssize_t - number of aplit elements inside dest 
- */
-size_t split(char **dest, int dest_cap, char *str, char *delim)
-{
-	int 	count = 0;
-
-	char *tok = strtok2(str, delim);
-	for (; tok && count < dest_cap - 1; count++){
-		dest[count] = tok;
-		tok = strtok2(NULL, delim);
-	}
-	dest[count] = NULL;
-	
-	return count;
-}
-
-/**
- * @brief find text element substr in array a
- * 
- * @returns pointer to the matching element inside a
- */
-char *str_array_find(char **a, const char *substr)
-{
-	for (int i = 0; a[i]; i++) 
-		if (strstr(a[i], substr))
-			return a[i];
-	
-	return NULL;
-}
-
-int handle_post_request(char *buff, char *url, char **req_headers, char *req_body, int argc, char **argv)
-{
-	char *base_url 	= strtok(url + 1,  "/");
-	char *url_arg  	= url_arg = strtok(NULL, "");
-
-	char *cont_type;
-	{
-		char *header = str_array_find(req_headers, "Content-Type");
+		char *header = str_array_find(src, "Content-Type");
 		if (header)
 		{
 			strtok2(header, ": ");
-			cont_type = strtok2(NULL, "");
+			target->cont_type = strtok2(NULL, "");
 		}
 	}
 
-	int cont_len;
+	target->cont_len = 0;
 	{
-		char *header = str_array_find(req_headers, "Content-Length");
+		char *header = str_array_find(src, "Content-Length");
 		if (header)
 		{
 			strtok2(header, ": ");
-			cont_len = atoi(strtok2(NULL, RN));
+			target->cont_len = atoi(strtok2(NULL, RN));
 		}
 	}
 
-	enum CONTENT_ENCODING cont_encoding = NO_ENCOD;
+	target->cont_encoding = NO_ENCOD;
 	{
-		char *header = str_array_find(req_headers, "Accept-Encoding");
+		char *header = str_array_find(src, "Accept-Encoding");
 		if (header)
 		{
 			strtok2(header, ": ");
 			char *req_encod = strtok2(NULL, "");
 			char *dest[10] = {0};
-			split(dest, 10, req_encod, ",");
-			for (int j = 0; j < 10; j++)
+			int count = split(dest, 10, req_encod, ",");
+			for (int j = 0; j < count; j++)
 				for (int i = ENCODING_START; i < ENCODING_MAX; i ++)
-					if (!strcmp(dest[j], content_encodings[i]))
-						cont_encoding = i;
+					if (!strcmp(trim(dest[j]), content_encodings[i]))
+						target->cont_encoding = i;
 		}
 	}
+}
+
+
+size_t handle_post_request(char *buff, char *url, char **req_headers, char *req_body, int argc, char **argv)
+{
+	http_headers headers;
+	char *base_url 		 	= strtok(url + 1,  "/");
+	char *url_arg  			= url_arg = strtok(NULL, "");
+	
+	parse_http_headers(req_headers, &headers);
 
 	printf ("POST %s requested\n", base_url);
 	printf ("arg: %s\n", url_arg);
 
 	if (!strcmp(base_url, "files")){
-		if (argc < 3 || strcmp(cont_type, CONTENT_TYPE_OCT_STREAM))
+		if (argc < 3 || strcmp(headers.cont_type, CONTENT_TYPE_OCT_STREAM))
 		{
 			printf("insufficient args\n");
 			return snprintf(buff, MAXLINE, error_headers);
 		}
 
-		if (!cont_len)
+		if (!headers.cont_len)
 		{
 			printf("no content length header\n");
-			return success_response(buff, CONT_TYPE_OCT_STREAM, cont_encoding, H200, NULL);
+			return success_response(buff, CONT_TYPE_OCT_STREAM, headers.cont_encoding, H200, NULL);
 		}
 
 		char file_name[256];
 		snprintf(file_name, MAXLINE, "%s/%s", argv[2], url_arg);
-		printf("write content: %s to file: %s\n", req_body, file_name);
 		FILE *f = fopen(file_name, "w");
 		if (!f) {
 			printf("file failed to open\n");
 			return snprintf(buff, MAXLINE, error_headers);
 		}
 
-		size_t n = fwrite(req_body, cont_len, 1, f);
+		size_t n = fwrite(req_body, headers.cont_len, 1, f);
 		if (n != 1){
 			printf("error writing to file\n");
 			fclose(f);
@@ -274,7 +149,7 @@ int handle_post_request(char *buff, char *url, char **req_headers, char *req_bod
 			return snprintf(buff, MAXLINE, error_headers);
 		}
 
-		return success_response(buff, CONT_TYPE_OCT_STREAM, cont_encoding, H201, NULL);
+		return success_response(buff, CONT_TYPE_OCT_STREAM, headers.cont_encoding, H201, NULL);
 	}
 
 }
@@ -282,50 +157,39 @@ int handle_post_request(char *buff, char *url, char **req_headers, char *req_bod
 
 /**
  * @brief examines http request provided in req_url and req_headers, writes http response into buff
+ * 
+ * 
  */
 int handle_get_request(char *buff, char *url, char **req_headers, int argc, char **argv)
 {
 	char *user_agent;
 	char *base_url = strtok(url,  "/");
 	char *url_arg = strtok(NULL, "");
+	http_headers headers;
 
-	enum CONTENT_ENCODING cont_encoding = NO_ENCOD;
-	{
-		char *header = str_array_find(req_headers, "Accept-Encoding");
-		if (header)
-		{
-			strtok2(header, ": ");
-			char *req_encod = strtok2(NULL, "");
-			char *dest[10] = {0};
-			split(dest, 10, req_encod, ",");
-			for (int j = 0; j < 10; j++)
-				for (int i = ENCODING_START; i < ENCODING_MAX; i ++)
-					if (!strcmp(dest[j], content_encodings[i]))
-						cont_encoding = i;
-		}
-	}
+	parse_http_headers(req_headers, &headers);
 
-	printf("GET %s/%s requested\n", url, url_arg);
+	printf("GET /%s/%s requested\n", base_url, url_arg);
 
 	if (!strcmp(url, "/"))
-		success_response(buff, CONT_TYPE_TEXT, cont_encoding, H200, "");
+		return success_response(buff, CONT_TYPE_TEXT, headers.cont_encoding, H200, "");
 
 	else if (!base_url)
-		snprintf(buff, MAXLINE, error_headers);
+		return snprintf(buff, MAXLINE, error_headers);
 
 	else if (!strcmp(base_url, "echo"))
-		success_response(buff, CONT_TYPE_TEXT, cont_encoding, H200, url_arg);
+		return success_response(buff, CONT_TYPE_TEXT, headers.cont_encoding, H200, url_arg);
 
 	else if (!strcmp(base_url, "user-agent"))
 		if ((user_agent = str_array_find(req_headers, "User-Agent:")))
-			success_response(buff, CONT_TYPE_TEXT, cont_encoding, H200, &user_agent[12]);
+			return success_response(buff, CONT_TYPE_TEXT, headers.cont_encoding, H200, &user_agent[12]);
 		else
-			snprintf(buff, MAXLINE, error_headers);
+			return snprintf(buff, MAXLINE, error_headers);
 
 	else if(!strcmp(base_url, "files"))
 	{
 		if (argc < 3 && strncmp(argv[1], "--directory", 11))
-			snprintf(buff, MAXLINE, error_headers);
+			return snprintf(buff, MAXLINE, error_headers);
 		else
 		{
 			char 	filename[255], data[8092];
@@ -336,16 +200,17 @@ int handle_get_request(char *buff, char *url, char **req_headers, int argc, char
 			FILE *f = fopen(filename, "r");
 			
 			if (!f)
-				snprintf(buff, MAXLINE, error_headers);
+				return snprintf(buff, MAXLINE, error_headers);
 			
 			else if (0 > (sz = fread(data, 1, MAXLINE, f)))
-				snprintf(buff, MAXLINE, error_headers);
+				return snprintf(buff, MAXLINE, error_headers);
 			
-			else success_response(buff, CONT_TYPE_OCT_STREAM, cont_encoding, H200, data);
+			else 
+				return success_response(buff, CONT_TYPE_OCT_STREAM, headers.cont_encoding, H200, data);
 		}
 	}
-	else 
-		snprintf(buff, MAXLINE, error_headers);
+	else
+		return snprintf(buff, MAXLINE, error_headers);
 }
 
 /**
@@ -427,6 +292,7 @@ int main(int argc, char **argv)
 	while (1)
 	{
 		ssize_t 		   n;
+		size_t			   res_size;
 		char 			   *split_line[3] = {0};
 		char 			   *req_headers[10] = {0};
 		char 			   *req_url;
@@ -457,12 +323,12 @@ int main(int argc, char **argv)
 			char *url = strtok(NULL, " ");
 	
 			if (strstr(method, "GET"))
-				handle_get_request((char *)buff, url, req_headers + 1, argc, argv);
+				res_size = handle_get_request((char *)buff, url, req_headers + 1, argc, argv);
 			
 			else if (strstr(method, "POST"))
 			{
 				if (!body) continue;
-				handle_post_request((char *)buff, url, req_headers + 1, body, argc, argv);
+				res_size = handle_post_request((char *)buff, url, req_headers + 1, body, argc, argv);
 			}
 
 			else{
@@ -472,9 +338,7 @@ int main(int argc, char **argv)
 				continue;
 			}
 			
-			printf("%s\n", buff);
-			
-			write(events[i].data.fd, buff, strlen((char *)buff));
+			write(events[i].data.fd, buff, res_size);
 			memset(req_headers, 0, sizeof(req_headers));
 		}
 
